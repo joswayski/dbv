@@ -6,11 +6,13 @@ on:
     paths:
       - "experiments/linux-native/**"
       - "crates/dbm-engine/**"
+      - "crates/dbm-workbench/**"
       - ".github/workflows/native-linux.yml"
   pull_request:
     paths:
       - "experiments/linux-native/**"
       - "crates/dbm-engine/**"
+      - "crates/dbm-workbench/**"
       - ".github/workflows/native-linux.yml"
 
 permissions:

@@ -79,10 +79,10 @@ x86_64-pc-windows-gnu -D warnings`, and a mingw release link all pass on Linux,
 which catches API misuse at the type level.
 
 For a smoke test without a Windows machine, the mingw build runs under Wine.
-Wine's Direct2D does not rasterize text, so the window shows the chrome and
-layout but no glyphs; that is a Wine limitation, not a DBM result. Wine also
-predates the `bcryptprimitives.dll` API set that Rust's standard library
-imports, so `tools/bcryptprimitives_stub.c` is needed first:
+Wine 11 renders the chrome, layout, and text; it substitutes Segoe UI and drops
+some glyphs in the 9 px uppercase labels, so treat text rendering as
+unverified. Wine also predates the `bcryptprimitives.dll` API set that Rust's
+standard library imports, so `tools/bcryptprimitives_stub.c` is needed first:
 
 ```sh
 x86_64-w64-mingw32-gcc -shared -O2 -o bcryptprimitives.dll \

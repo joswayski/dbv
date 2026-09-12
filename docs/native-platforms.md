@@ -157,8 +157,9 @@ What has actually been verified:
   15 and Redis 7 under Xvfb (connect, schema tree, query results, table paging,
   Redis keyspace and `PING`, connection editor).
 - Windows frontend: `cargo check` for the MSVC target, strict clippy for the GNU
-  target, and a mingw release link. A Wine smoke run shows the custom chrome and
-  layout, but Wine's Direct2D does not rasterize text, so glyph rendering is
+  target, and a mingw release link. A Wine 11 smoke run renders the custom
+  chrome, layout, and text, but Wine substitutes Segoe UI and drops a few
+  small-glyph eyebrow labels, so text rendering and interaction are still
   unverified. Nothing has been run on Windows.
 - macOS bridge: tests for request validation, profile round-trip, and URL import,
   run on Linux. The SwiftUI layer has not been compiled; the macOS CI job and
