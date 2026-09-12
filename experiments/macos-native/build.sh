@@ -13,11 +13,20 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Keep the Rust objects and the Swift objects on the same deployment target.
+export MACOSX_DEPLOYMENT_TARGET=13.0
+
 mode="${1:-debug}"
 target="$(uname -m)-apple-macos13.0"
 app="build/DBM Native.app"
 profile_dir="debug"
 cargo_flags=()
+
+# The Rust static library does not carry its C dependencies' link flags, so the
+# final link needs the system libraries its dependencies use: flate2's zlib
+# backend, whoami's SystemConfiguration lookup, and the Security/CoreFoundation
+# frameworks behind keyring and native-tls.
+native_libs=(-lz -framework Security -framework CoreFoundation -framework SystemConfiguration)
 
 case "$mode" in
   debug) ;;
@@ -57,6 +66,7 @@ swiftc -parse-as-library -O \
   -target "$target" \
   -o "$app/Contents/MacOS/DBMNative" \
   -L "bridge/target/$profile_dir" -ldbm_native_bridge \
+  "${native_libs[@]}" \
   DBMNative/*.swift
 cp Info.plist "$app/Contents/Info.plist"
 
