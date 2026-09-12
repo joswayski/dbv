@@ -142,11 +142,12 @@ Passwords are stored in the operating system credential store when available.
 The browser preview used by Vite has a small in-memory mock so the layout can be
 worked on without launching Tauri. The real desktop app uses the Rust commands.
 
-## Platform-native frontends (in development)
+## Platform-native frontends
 
-The shipping app above is Tauri plus React. A separate, in-development effort
-replaces only the presentation layer with platform-native, custom-rendered
-frontends that link the shared engines directly, without a webview:
+The native frontends are the direction of record for the next release: they
+replace only the presentation layer with platform-native, custom-rendered UIs
+that link the shared engines directly, without a webview. The Tauri app above
+stays the fallback until they reach parity and gain installers.
 
 - **Linux:** a GTK4 frontend under `experiments/linux-native` covers saved
   connections and the connection editor, schema/keyspace browsing, query tabs
@@ -155,15 +156,16 @@ frontends that link the shared engines directly, without a webview:
   and Redis.
 - **Windows:** a Win32 + Direct2D/DirectWrite frontend under
   `experiments/windows-native` covers the same workbench with a custom-painted
-  text editor. It compiles and links; it has not been run on Windows yet.
+  text editor. It builds and tests on Windows CI and has been exercised under
+  Wine against live databases; it has not been run on Windows by hand yet.
 - **macOS:** a SwiftUI/AppKit app under `experiments/macos-native` with a tested
   Rust bridge. The app typechecks and builds a bundle on a macOS CI runner; it
   has not been launched yet.
 
-This is not a replacement release: none of it is wired into installers, the
-updater, or published artifacts, and several Tauri features (staged inline
-edits, tab rename/collapse) are not in the native UIs yet. Status, gaps, and
-verification rules live in
+What is still missing before the native frontends can replace the Tauri app:
+staged inline edits and deletes, structured filters on Windows and macOS, tab
+rename/collapse, and installer, signing, and updater integration. Status, gaps,
+benchmarks, and verification rules live in
 [docs/native-platforms.md](docs/native-platforms.md).
 
 ## Deliberate follow-ups

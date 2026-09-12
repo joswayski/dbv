@@ -50,7 +50,8 @@ without macOS.
   presets, connection-URL import, TLS, CA path, read-only switch, and colors.
 - Schema/keyspace browsing with database switching and refresh.
 - Query tabs: statement-under-cursor targeting, ⌘↩ to run, destructive-statement
-  confirmation, 10,000-row cap, per-profile history, and a results grid.
+  confirmation, 10,000-row cap, per-profile history, and a results grid. A
+  `SELECT * FROM table` statement opens the full table view instead.
 - Table tabs: paginated previews, ordering from column headers, CSV copy, and
   full filtered CSV export.
 

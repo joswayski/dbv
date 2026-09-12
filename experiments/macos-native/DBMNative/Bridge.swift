@@ -60,6 +60,27 @@ enum Bridge {
         _ = try await run { try callRaw(payload) }
     }
 
+    /// Resolves `SELECT * FROM table` against the tables the app knows about.
+    static func resolveTableSelect(
+        sql: String,
+        tables: [[String: String]]
+    ) async throws -> (schema: String, table: String)? {
+        struct Response: Decodable {
+            struct Target: Decodable {
+                let schema: String
+                let table: String
+            }
+
+            let resolved: Target?
+        }
+        let response = try await call(
+            ["op": "resolve_table_select", "sql": sql, "tables": tables],
+            as: Response.self
+        )
+        guard let target = response.resolved else { return nil }
+        return (target.schema, target.table)
+    }
+
     static func shutdown() {
         dbm_shutdown_raw()
     }

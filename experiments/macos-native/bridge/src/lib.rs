@@ -30,7 +30,7 @@ use std::sync::{Arc, OnceLock};
 
 use dbm_engine::error::{AppError, AppResult};
 use dbm_engine::models::{
-    ConnectionProfile, QueryHistoryEntry, SaveProfileInput, TablePageRequest,
+    ConnectionProfile, QueryHistoryEntry, SaveProfileInput, SchemaNode, TablePageRequest,
 };
 use dbm_engine::session::DbSession;
 use dbm_engine::state::AppState;
@@ -94,6 +94,21 @@ struct RunQueryRequest {
 struct ExportRequest {
     request: TablePageRequest,
     path: String,
+}
+
+/// The SwiftUI app sends the tables it knows about; the shared workbench crate
+/// decides whether the SQL names exactly one of them.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolveTableSelectRequest {
+    sql: String,
+    tables: Vec<TableRef>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TableRef {
+    schema: String,
+    table: String,
 }
 
 /// Handles one request. Exposed for tests and used by the C entry point.
@@ -256,6 +271,27 @@ fn handle(state: &Arc<AppState>, op: &str, request: &Value) -> AppResult<Value> 
                     .map_err(|error| AppError::Storage(error.to_string()))?;
                 Ok(json!(rows_written))
             })
+        }
+        "resolve_table_select" => {
+            let request: ResolveTableSelectRequest = decode(request)?;
+            let nodes: Vec<SchemaNode> = request
+                .tables
+                .iter()
+                .map(|reference| SchemaNode {
+                    name: reference.table.clone(),
+                    kind: "table".to_owned(),
+                    schema: Some(reference.schema.clone()),
+                    table: Some(reference.table.clone()),
+                    children: Vec::new(),
+                })
+                .collect();
+            let resolved =
+                dbm_workbench::table_select::resolve_full_table_select(&request.sql, &nodes)
+                    .map_or(
+                        Value::Null,
+                        |(schema, table)| json!({ "schema": schema, "table": table }),
+                    );
+            Ok(json!({ "resolved": resolved }))
         }
         "import_url" => {
             let url = string_field(request, "url")?;
@@ -420,6 +456,35 @@ mod tests {
         assert!(response["error"]
             .as_str()
             .is_some_and(|message| message.contains("unknown op")));
+    }
+
+    #[test]
+    fn resolves_full_table_selects_from_the_supplied_tables() {
+        let state = test_state();
+        let request = json!({
+            "op": "resolve_table_select",
+            "sql": "SELECT * FROM public.users;",
+            "tables": [
+                { "schema": "public", "table": "users" },
+                { "schema": "audit", "table": "events" }
+            ]
+        });
+        let response: Value =
+            serde_json::from_str(&call(&state, &request.to_string())).expect("json");
+        assert_eq!(response["ok"]["resolved"]["schema"], "public");
+        assert_eq!(response["ok"]["resolved"]["table"], "users");
+
+        let ambiguous = json!({
+            "op": "resolve_table_select",
+            "sql": "SELECT * FROM users",
+            "tables": [
+                { "schema": "public", "table": "users" },
+                { "schema": "audit", "table": "users" }
+            ]
+        });
+        let response: Value =
+            serde_json::from_str(&call(&state, &ambiguous.to_string())).expect("json");
+        assert!(response["ok"]["resolved"].is_null());
     }
 
     #[test]

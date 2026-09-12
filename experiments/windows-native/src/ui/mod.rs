@@ -455,6 +455,16 @@ impl Ui {
         );
     }
 
+    /// The table a full-table select names, when this profile's schema tree
+    /// has exactly one match. Redis commands never resolve to a table.
+    fn resolve_table_select(&self, profile_id: Uuid, sql: &str) -> Option<(String, String)> {
+        if self.profile_engine(profile_id) == DatabaseEngine::Redis {
+            return None;
+        }
+        let tree = self.schemas.get(&profile_id).cloned().unwrap_or_default();
+        dbm_workbench::table_select::resolve_full_table_select(sql, &tree)
+    }
+
     fn run_query(&mut self, tab: u64, sql: String) {
         let Some(state) = self.queries.get_mut(&tab) else {
             return;
@@ -651,11 +661,15 @@ impl Ui {
                 }
             }
             EngineEvent::Query { tab, sql, result } => {
+                let mut succeeded = false;
+                let mut profile_id = None;
                 if let Some(state) = self.queries.get_mut(&tab) {
                     state.running = false;
+                    profile_id = Some(state.profile_id);
                     match result {
                         Ok(response) => {
-                            state.executed_sql = Some(sql);
+                            succeeded = true;
+                            state.executed_sql = Some(sql.clone());
                             state.meta = query_meta(&response);
                             state.response = Some(response);
                         }
@@ -663,6 +677,15 @@ impl Ui {
                             state.meta = "Statement failed.".to_owned();
                             state.error = Some(error);
                             state.response = None;
+                        }
+                    }
+                }
+                // `SELECT * FROM table` opens the full table view, matching
+                // the Tauri workbench.
+                if succeeded {
+                    if let Some(profile_id) = profile_id {
+                        if let Some((schema, table)) = self.resolve_table_select(profile_id, &sql) {
+                            self.open_table(profile_id, schema, table);
                         }
                     }
                 }

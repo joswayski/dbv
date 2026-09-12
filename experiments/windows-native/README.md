@@ -56,7 +56,8 @@ the toolchain Microsoft ships, because checking does not link.
 - Schema/keyspace tree with expand/collapse and refresh.
 - Query tabs: statement-under-cursor targeting, Ctrl+Enter to run,
   destructive-statement confirmation, 10,000-row cap, per-profile history, and
-  a scrollable results grid.
+  a scrollable results grid. A `SELECT * FROM table` statement opens the full
+  table view instead.
 - Table tabs: 200-row pages, ordering from column headers, refresh, CSV copy to
   the clipboard, and full filtered CSV export through the system save dialog.
 - Text editing (caret, selection, word movement, clipboard) implemented against

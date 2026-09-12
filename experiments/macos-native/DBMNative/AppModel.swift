@@ -325,9 +325,10 @@ final class AppModel: ObservableObject {
               case let .query(database) = tab.kind
         else { return }
         let text = sqlText[tabId] ?? ""
-        let sql = selectedOrCurrentStatement(text, tabId: tabId, engine: engine(for: tab.profileId))
+        let engine = engine(for: tab.profileId)
+        let sql = selectedOrCurrentStatement(text, tabId: tabId, engine: engine)
         guard !sql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        if requiresConfirmation(sql, engine: engine(for: tab.profileId)) {
+        if requiresConfirmation(sql, engine: engine) {
             confirm = ConfirmRequest(
                 title: "Run destructive statement",
                 body: "This query may change or remove many rows. Run it anyway?",
@@ -337,7 +338,34 @@ final class AppModel: ObservableObject {
             )
             return
         }
+        let target = await resolveTableSelect(sql, profileId: tab.profileId, engine: engine)
         await execute(tabId: tabId, sql: sql, database: database)
+        // `SELECT * FROM table` opens the full table view, matching the Tauri
+        // workbench, so the result is browsable and filterable.
+        if let target, queryErrors[tabId] == nil {
+            openTable(profileId: tab.profileId, schema: target.schema, table: target.table)
+        }
+    }
+
+    /// Asks the shared workbench crate whether the statement names one table.
+    private func resolveTableSelect(
+        _ sql: String,
+        profileId: String,
+        engine: DatabaseEngine
+    ) async -> (schema: String, table: String)? {
+        guard !engine.isRedis else { return nil }
+        var tables: [[String: String]] = []
+        func visit(_ nodes: [SchemaNode]) {
+            for node in nodes {
+                if node.kind == "table", let schema = node.schema, let table = node.table {
+                    tables.append(["schema": schema, "table": table])
+                }
+                visit(node.children)
+            }
+        }
+        visit(schemas[profileId] ?? [])
+        guard !tables.isEmpty else { return nil }
+        return try? await Bridge.resolveTableSelect(sql: sql, tables: tables)
     }
 
     func execute(tabId: String, sql: String, database: String) async {
@@ -464,7 +492,15 @@ final class AppModel: ObservableObject {
             guard let tab = tabs.first(where: { $0.id == tabId }),
                   case let .query(database) = tab.kind
             else { return }
+            let target = await resolveTableSelect(
+                sql,
+                profileId: tab.profileId,
+                engine: engine(for: tab.profileId)
+            )
             await execute(tabId: tabId, sql: sql, database: database)
+            if let target, queryErrors[tabId] == nil {
+                openTable(profileId: tab.profileId, schema: target.schema, table: target.table)
+            }
         }
     }
 

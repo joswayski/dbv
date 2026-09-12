@@ -59,11 +59,13 @@ experiments/macos-native      SwiftUI/AppKit presentation + Rust C-ABI bridge
 | Platform | Presentation | State |
 | --- | --- | --- |
 | Linux | Rust + GTK4, custom CSS | Vertical slice implemented; exercised against live PostgreSQL 15 and Redis 7 under Xvfb |
-| Windows | Rust + Win32 + Direct2D/DirectWrite | Vertical slice implemented; compiles, clippy-clean, and links as a real `.exe`. Not run on Windows |
-| macOS | Swift + SwiftUI/AppKit + Rust bridge | Vertical slice implemented; the bridge is tested on Linux and the app typechecks and builds on a macOS CI runner. Not run yet |
+| Windows | Rust + Win32 + Direct2D/DirectWrite | Vertical slice implemented; built and tested on Windows CI and exercised under Wine against live PostgreSQL and Redis. Not run on Windows by hand |
+| macOS | Swift + SwiftUI/AppKit + Rust bridge | Vertical slice implemented; the bridge is tested on Linux and the app typechecks and builds on a macOS CI runner. Not launched yet |
 
 All three are experiments: none is wired into installers, the updater, or
-release artifacts.
+release artifacts yet. They are the direction of record for the next release,
+with the Tauri app as the fallback until they reach parity and gain installers;
+the README lists what is still missing.
 
 ## What the native slices implement
 
@@ -83,7 +85,9 @@ Shared behavior (identical across the three):
 - **Query tabs:** statement targeting ported from the React editor (including
   quoted strings, nested block comments, and PostgreSQL dollar quotes),
   keyboard run (Ctrl/⌘+Enter), confirmation before destructive statements, a
-  10,000-row cap, per-profile-and-database history, and a results grid. Redis
+  10,000-row cap, per-profile-and-database history, and a results grid. A
+  statement that resolves to exactly one table as `SELECT * FROM [schema.]table`
+  opens the full table view instead, matching the Tauri workbench. Redis
   connections get a command workbench instead of SQL.
 - **Table tabs:** paginated previews (200 rows), ordering, refresh, copy the
   current page as CSV, and full filtered CSV export with a large-export
@@ -106,10 +110,11 @@ Platform notes:
 
 ## Known gaps versus the Tauri app
 
-- Staged inline edits and deletes, and the editable table viewer that opens for a
-  simple `SELECT * FROM table`, are not built yet on any native frontend. The
+- Staged inline edits and deletes are not built yet on any native frontend. The
   shared engine already supports mutations (including PostgreSQL `xmin`
-  concurrency), so this is UI work, not engine work.
+  concurrency) and the Tauri UI implements them, so this is UI work. A
+  `SELECT * FROM table` statement opens the full table view on every native
+  frontend, matching the Tauri workbench, but that view is still read-only.
 - Structured table filters exist on Linux only; Windows and macOS do ordering,
   paging, and CSV export.
 - Query tabs cannot be renamed or collapsed; table columns cannot be collapsed
@@ -118,6 +123,37 @@ Platform notes:
 - There is no updater or installer integration for native builds, and none of
   them is signed or notarized.
 - Windows has no draggable scrollbars and no mixed-DPI verification yet.
+
+## Performance
+
+The native frontends exist to remove the webview from the hot path, so the
+project keeps a repeatable comparison. `scripts/bench-frontends.py` measures a
+frontend under Xvfb: time to a mapped window, time to the first painted frame,
+memory (RSS and PSS, summed over the process tree), CPU, and one connect +
+query workload.
+
+Recorded on an orb (Linux, x86_64, release builds, 1400x900, median of three
+runs, same saved PostgreSQL profile):
+
+| Metric | Tauri + WebKitGTK | GTK4 native | Difference |
+| --- | --- | --- | --- |
+| Binary size | 30.8 MB | 11.8 MB | 2.6x smaller |
+| Window mapped | 0.29 s | 0.30 s | same |
+| First painted frame | 1.47 s | 0.83 s | 1.8x faster |
+| Idle PSS / RSS | 315 MB / 498 MB | 126 MB / 166 MB | 2.5x / 3.0x less |
+| After connect + query (PSS / RSS) | 368 MB / 555 MB | 159 MB / 202 MB | 2.3x / 2.7x less |
+| Idle CPU | 0.25% | 0.00% | |
+
+Two caveats matter when reading this:
+
+- Xvfb has no GPU, and WebKit's compositor busy-waits there: the Tauri web
+  process held ~61% of a core after a query result rendered, and dropped to
+  1.2% with `WEBKIT_DISABLE_COMPOSITING_MODE=1`. That is an artifact of
+  software rendering, not a claim about Tauri on a real desktop. The native
+  frontend's post-query CPU settles back to 0%.
+- Database work is engine-bound and identical by construction, so these numbers
+  are about the presentation layer only. macOS and Windows have not been
+  measured.
 
 ## Verification
 
@@ -151,18 +187,21 @@ Workflows: `native-linux.yml` (Ubuntu), `native-windows.yml` (Windows),
 
 What has actually been verified:
 
-- Root workspace: formatting, strict clippy, and 38 tests (engine, workbench
+- Root workspace: formatting, strict clippy, and 42 tests (engine, workbench
   logic, Tauri shell).
 - Linux frontend: strict clippy, a release build, and a hand-run session against
   live PostgreSQL 15 and Redis 7 under Xvfb (connect, schema tree, query
-  results, table paging, Redis keyspace and `PING`, connection editor).
+  results, table paging, Redis keyspace and `PING`, connection editor, and
+  `SELECT * FROM orders` opening the table view while `SELECT count(*) …` stays
+  in the query tab).
 - Windows frontend: `cargo check` for the MSVC target, strict clippy for the GNU
   target, a mingw release link, and unit tests run under Wine. A Wine 11 run
   exercised the whole workbench against live PostgreSQL 15 and Redis 7:
   connecting, the schema tree, typing in the DirectWrite editor, running SQL and
-  Redis commands with Ctrl+Enter, the results grid, and table pages. Wine
-  substitutes Segoe UI and drops a few glyphs in the 9 px eyebrow labels;
-  everything else rendered. Nothing has been run on Windows itself.
+  Redis commands with Ctrl+Enter, the results grid, table pages, and
+  `SELECT * FROM orders` opening the table view. Wine substitutes Segoe UI and
+  drops a few glyphs in the 9 px eyebrow labels; everything else rendered.
+  Nothing has been run on Windows itself.
 - macOS bridge: tests for request validation, profile round-trip, and URL import,
   run on Linux. The SwiftUI layer typechecks and links into an app bundle on the
   macOS CI runner (macOS 14, arm64); it has not been launched.

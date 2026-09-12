@@ -20,6 +20,7 @@ use crate::ui::dialogs;
 use crate::ui::grid::{default_column_width, DataGrid};
 use dbm_workbench::format;
 use dbm_workbench::sql_target;
+use dbm_workbench::table_select;
 
 struct QueryState {
     profile_id: Uuid,
@@ -205,11 +206,13 @@ pub fn build(
     }
     {
         let state = state.clone();
+        let ui = ui.clone();
         let engine = engine.clone();
         refresh_button.connect_clicked(move |_| {
             let sql = state.borrow().executed_sql.clone();
             if let Some(sql) = sql {
-                execute(state.clone(), engine.clone(), sql);
+                let target = resolve_target(&state, &ui, &sql);
+                execute(state.clone(), ui.clone(), engine.clone(), sql, target);
             }
         });
     }
@@ -245,6 +248,26 @@ fn selected_or_current_sql(state: &QueryState) -> String {
     target.map_or_else(String::new, |target| target.sql)
 }
 
+/// The table a full-table select names, when this profile's schema tree has
+/// exactly one match. Redis commands never resolve to a table.
+fn resolve_target(
+    state: &Rc<RefCell<QueryState>>,
+    ui: &Rc<RefCell<Ui>>,
+    sql: &str,
+) -> Option<(String, String)> {
+    let state = state.borrow();
+    if state.engine == DatabaseEngine::Redis {
+        return None;
+    }
+    let tree = ui
+        .borrow()
+        .schemas
+        .get(&state.profile_id)
+        .cloned()
+        .unwrap_or_default();
+    table_select::resolve_full_table_select(sql, &tree)
+}
+
 fn run(state: Rc<RefCell<QueryState>>, ui: Rc<RefCell<Ui>>, engine: Arc<AppState>) {
     let (sql, running, engine_kind) = {
         let state = state.borrow();
@@ -253,9 +276,12 @@ fn run(state: Rc<RefCell<QueryState>>, ui: Rc<RefCell<Ui>>, engine: Arc<AppState
     if running || sql.trim().is_empty() {
         return;
     }
+    let target_table = resolve_target(&state, &ui, &sql);
     if format::requires_confirmation(&sql, engine_kind) {
         let confirm_state = state.clone();
         let confirm_engine = engine.clone();
+        let confirm_ui = ui.clone();
+        let confirm_target = target_table.clone();
         let window = ui.borrow().window.clone();
         dialogs::confirm(
             &window,
@@ -263,14 +289,28 @@ fn run(state: Rc<RefCell<QueryState>>, ui: Rc<RefCell<Ui>>, engine: Arc<AppState
             "This query may change or remove many rows. Run it anyway?",
             "Run",
             true,
-            move || execute(confirm_state, confirm_engine, sql),
+            move || {
+                execute(
+                    confirm_state,
+                    confirm_ui,
+                    confirm_engine,
+                    sql,
+                    confirm_target,
+                )
+            },
         );
         return;
     }
-    execute(state, engine, sql);
+    execute(state, ui, engine, sql, target_table);
 }
 
-fn execute(state: Rc<RefCell<QueryState>>, engine: Arc<AppState>, sql: String) {
+fn execute(
+    state: Rc<RefCell<QueryState>>,
+    ui: Rc<RefCell<Ui>>,
+    engine: Arc<AppState>,
+    sql: String,
+    target_table: Option<(String, String)>,
+) {
     let (profile_id, database) = {
         let state = state.borrow();
         (state.profile_id, state.database.clone())
@@ -286,6 +326,7 @@ fn execute(state: Rc<RefCell<QueryState>>, engine: Arc<AppState>, sql: String) {
     let started = Instant::now();
     let sql_for_callback = sql.clone();
     let engine_for_history = engine.clone();
+    let ui_for_callback = ui.clone();
     bridge::spawn(
         async move {
             let session = engine.session(profile_id).await?;
@@ -307,12 +348,14 @@ fn execute(state: Rc<RefCell<QueryState>>, engine: Arc<AppState>, sql: String) {
             response
         },
         move |result| {
+            let mut succeeded = false;
             {
                 let mut state = state.borrow_mut();
                 state.running = false;
                 state.run_button.set_sensitive(true);
                 match result {
                     Ok(response) => {
+                        succeeded = true;
                         state.executed_sql = Some(sql_for_callback.clone());
                         state.refresh_button.set_sensitive(true);
                         apply_response(&mut state, &response);
@@ -325,6 +368,13 @@ fn execute(state: Rc<RefCell<QueryState>>, engine: Arc<AppState>, sql: String) {
                         state.grid.clear();
                     }
                 }
+            }
+            // `SELECT * FROM table` opens the full table view, matching the
+            // Tauri workbench, so the result is browsable (and filterable).
+            if let (true, Some((schema, table))) = (succeeded, target_table) {
+                ui_for_callback
+                    .borrow_mut()
+                    .open_table(profile_id, schema, table);
             }
             refresh_history(state.clone(), engine_for_history.clone());
         },
