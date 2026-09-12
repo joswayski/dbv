@@ -157,7 +157,8 @@ frontends that link the shared engines directly, without a webview:
   `experiments/windows-native` covers the same workbench with a custom-painted
   text editor. It compiles and links; it has not been run on Windows yet.
 - **macOS:** a SwiftUI/AppKit app under `experiments/macos-native` with a tested
-  Rust bridge. The SwiftUI layer has not been compiled yet.
+  Rust bridge. The app typechecks and builds a bundle on a macOS CI runner; it
+  has not been launched yet.
 
 This is not a replacement release: none of it is wired into installers, the
 updater, or published artifacts, and several Tauri features (staged inline

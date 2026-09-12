@@ -70,7 +70,8 @@ without macOS.
 
 The Rust bridge is covered by tests that run anywhere (`cargo test` in
 `bridge/`): request validation, profile round-trip, and connection-URL import.
-The SwiftUI layer has **not** been compiled in this repository's development
-environment; `.github/workflows/native-macos.yml` typechecks and builds it on a
-macOS runner, and `./build.sh check` does the same locally. Treat the UI as
-unverified until it has been run on a Mac.
+
+The SwiftUI layer typechecks and links into an app bundle on the macOS CI
+runner (macOS 14, arm64) via `./build.sh check` and `./build.sh release`, and
+`./build.sh` does the same locally. It has not been launched on a Mac yet, so
+treat the UI as unverified until it has been run.

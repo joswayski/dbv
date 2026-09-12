@@ -60,7 +60,7 @@ experiments/macos-native      SwiftUI/AppKit presentation + Rust C-ABI bridge
 | --- | --- | --- |
 | Linux | Rust + GTK4, custom CSS | Vertical slice implemented; exercised against live PostgreSQL 15 and Redis 7 under Xvfb |
 | Windows | Rust + Win32 + Direct2D/DirectWrite | Vertical slice implemented; compiles, clippy-clean, and links as a real `.exe`. Not run on Windows |
-| macOS | Swift + SwiftUI/AppKit + Rust bridge | Rust bridge implemented and tested on Linux; SwiftUI app written but **not compiled** yet |
+| macOS | Swift + SwiftUI/AppKit + Rust bridge | Vertical slice implemented; the bridge is tested on Linux and the app typechecks and builds on a macOS CI runner. Not run yet |
 
 All three are experiments: none is wired into installers, the updater, or
 release artifacts.
@@ -162,8 +162,8 @@ What has actually been verified:
   small-glyph eyebrow labels, so text rendering and interaction are still
   unverified. Nothing has been run on Windows.
 - macOS bridge: tests for request validation, profile round-trip, and URL import,
-  run on Linux. The SwiftUI layer has not been compiled; the macOS CI job and
-  `./build.sh check` are the first places it will be typechecked.
+  run on Linux. The SwiftUI layer typechecks and links into an app bundle on the
+  macOS CI runner (macOS 14, arm64); it has not been launched.
 
 Compilation or a static screenshot is not proof of interaction parity. Treat
 every "implemented" row above as "written and reviewed, pending a run on that
