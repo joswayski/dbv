@@ -36,8 +36,14 @@ struct SQLEditor: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(width: .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
-        textView.textContainer?.containerSize = NSSize(width: 0, height: .greatestFiniteMagnitude)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude
+        )
         textView.textContainer?.widthTracksTextView = true
         textView.string = text
         textView.onCommandReturn = onRun
