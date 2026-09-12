@@ -1,0 +1,11 @@
+# Long-running services for Amp orbs. `amp orb services ensure` starts these
+# supervised and prints their portal URLs.
+services:
+  ui:
+    # The browser preview in ui/ renders with the in-memory command mocks, so
+    # no Tauri backend or database connection is needed.
+    command: npm run dev --workspace @dbm/desktop -- --host 0.0.0.0 --port "$PORT"
+    health: /
+    portal:
+      title: DBM UI preview
+      description: Browser preview with in-memory mocks; no Tauri backend required.
