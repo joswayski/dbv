@@ -21,6 +21,17 @@ npm run check
 npm run dev
 ```
 
+### Amp orbs
+
+Amp orbs run [`.agents/setup`](.agents/setup) to prepare a fresh machine: it installs Tauri's
+Linux build dependencies, `redis-server` (the live Redis tests skip themselves without it),
+Node.js 24 with npm 11, the Rust toolchain pinned in `rust-toolchain.toml`, and the locked npm and
+Cargo dependencies. [`.agents/resume`](.agents/resume) only checks that the environment is still
+intact when an orb wakes.
+
+The Vite browser preview is declared in [`.amp/services.yaml`](.amp/services.yaml). Inside an orb,
+`amp orb services ensure` starts it supervised and prints its portal URL.
+
 ## Build and install
 
 `npm run build` creates a native build for the operating system where the

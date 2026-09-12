@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+#
+# Amp orb setup for DBM.
+#
+# Prepares a fresh orb to run `npm run check`, `cargo test --workspace`, and the
+# Vite browser preview:
+#
+#   * Tauri's Linux build dependencies and redis-server (the live Redis tests
+#     skip themselves when redis-server is missing)
+#   * Node.js 24 with npm 11, the versions used by CI and the README
+#   * the Rust toolchain pinned in rust-toolchain.toml
+#   * the locked npm and Cargo dependencies
+#
+# Amp runs this before snapshotting a new project orb and again whenever a stale
+# snapshot is refreshed, so every step checks first and is safe to repeat.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+node_major=24
+node_prefix="/usr/local/node-v${node_major}"
+cargo_bin="$HOME/.cargo/bin"
+rust_toolchain="1.94.0"
+
+tmp_dir="$(mktemp -d)"
+cleanup() { rm -rf "$tmp_dir"; }
+trap cleanup EXIT
+
+log() { printf '\n==> %s\n' "$*"; }
+
+timed() {
+  local label="$1"
+  shift
+  log "$label"
+  local started=$SECONDS
+  "$@"
+  printf '    %s took %ss\n' "$label" "$((SECONDS - started))"
+}
+
+install_system_packages() {
+  # The Tauri Linux dependencies from .github/workflows/ci.yml. build-essential,
+  # libssl-dev, librsvg2-dev, and pkg-config are already in the orb image but
+  # stay listed so this also works on a bare Debian machine.
+  local packages=(
+    build-essential
+    libayatana-appindicator3-dev
+    libssl-dev
+    libwebkit2gtk-4.1-dev
+    libxdo-dev
+    libgbm-dev
+    librsvg2-dev
+    pkg-config
+    redis-server
+  )
+  local missing=()
+  local package
+  for package in "${packages[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+      missing+=("$package")
+    fi
+  done
+  if ((${#missing[@]} == 0)); then
+    echo "All system packages are already installed."
+    return
+  fi
+  echo "Installing: ${missing[*]}"
+  sudo apt-get update
+  sudo apt-get install -y "${missing[@]}"
+}
+
+install_node() {
+  if [ -x "$node_prefix/bin/node" ]; then
+    echo "Node.js $("$node_prefix/bin/node" --version) is already installed in $node_prefix."
+    return
+  fi
+  local arch
+  case "$(dpkg --print-architecture)" in
+    amd64) arch=x64 ;;
+    arm64) arch=arm64 ;;
+    *)
+      echo "No Node.js build is known for architecture $(dpkg --print-architecture)." >&2
+      return 1
+      ;;
+  esac
+  local version
+  version="$(
+    curl -fsSL https://nodejs.org/dist/index.json |
+      jq -r --arg prefix "v${node_major}." 'map(select(.version | startswith($prefix)))[0].version'
+  )"
+  if [ -z "$version" ] || [ "$version" = "null" ]; then
+    echo "Could not resolve the latest Node.js ${node_major}.x release." >&2
+    return 1
+  fi
+  local archive="node-${version}-linux-${arch}.tar.xz"
+  local base_url="https://nodejs.org/dist/${version}"
+  echo "Installing Node.js ${version} into ${node_prefix}"
+  curl -fsSL -o "$tmp_dir/$archive" "$base_url/$archive"
+  curl -fsSL -o "$tmp_dir/SHASUMS256.txt" "$base_url/SHASUMS256.txt"
+  (cd "$tmp_dir" && grep " ${archive}\$" SHASUMS256.txt | sha256sum -c -)
+  sudo mkdir -p "$node_prefix"
+  sudo tar -xJf "$tmp_dir/$archive" -C "$node_prefix" --strip-components=1
+}
+
+install_rust() {
+  if [ ! -x "$cargo_bin/rustup" ]; then
+    echo "Installing rustup."
+    curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs |
+      sh -s -- -y --no-modify-path --profile minimal --default-toolchain none
+  fi
+  # The installer cannot update this running script's environment.
+  # shellcheck disable=SC1091
+  . "$HOME/.cargo/env"
+  if ! rustup toolchain list | grep -q "^${rust_toolchain}"; then
+    echo "Installing the Rust ${rust_toolchain} toolchain."
+    rustup toolchain install "$rust_toolchain" --profile minimal --no-self-update
+  fi
+  local installed
+  installed="$(rustup component list --toolchain "$rust_toolchain" --installed)"
+  if ! printf '%s\n' "$installed" | grep -q '^rustfmt' ||
+    ! printf '%s\n' "$installed" | grep -q '^clippy'; then
+    echo "Adding the rustfmt and clippy components."
+    rustup component add --toolchain "$rust_toolchain" rustfmt clippy
+  fi
+  rustup default "$rust_toolchain" >/dev/null
+  echo "Rust $(rustc --version) is ready."
+}
+
+persist_toolchain_path() {
+  # Amp starts later commands and supervised services in login shells that do
+  # not inherit this script's environment, so persist the toolchain locations.
+  local marker="# DBM orb toolchain (added by .agents/setup)"
+  local file
+  for file in "$HOME/.bash_profile" "$HOME/.bashrc"; do
+    [ -f "$file" ] || continue
+    if grep -Fqx "$marker" "$file"; then
+      continue
+    fi
+    {
+      printf '\n%s\n' "$marker"
+      printf '%s\n' 'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi'
+      printf 'if [ -d "%s/bin" ]; then export PATH="%s/bin:$PATH"; fi\n' "$node_prefix" "$node_prefix"
+    } >>"$file"
+  done
+}
+
+install_node_dependencies() {
+  npm ci --no-audit --no-fund
+}
+
+fetch_rust_dependencies() {
+  cargo fetch --locked
+}
+
+timed "Installing system packages" install_system_packages
+timed "Installing Node.js ${node_major}" install_node
+timed "Installing the Rust toolchain" install_rust
+persist_toolchain_path
+
+export PATH="$node_prefix/bin:$cargo_bin:$PATH"
+
+timed "Installing npm dependencies" install_node_dependencies
+timed "Fetching Cargo dependencies" fetch_rust_dependencies
+
+log "Orb setup complete"
+node --version
+npm --version
+rustc --version
+cargo --version

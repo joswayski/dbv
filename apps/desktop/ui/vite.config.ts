@@ -8,6 +8,8 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 1421,
     strictPort: true,
+    // Amp orbs expose the dev server through generated portal hostnames.
+    allowedHosts: process.env.AMP_ORB ? true : undefined,
   },
   build: {
     target: "es2022",

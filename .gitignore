@@ -10,3 +10,5 @@
 !.env.example
 **/tauri.release.conf.json
 **/gen/schemas/
+.amp/portals/
+.amp/in/

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#
+# Amp orb resume hook for DBM.
+#
+# Runs after activation and on every wake. It only verifies that the toolchain
+# and dependencies installed by .agents/setup are still present, because
+# installing dependencies is not allowed in this hook and Amp waits at most
+# 10 seconds for it.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+missing=()
+
+have() {
+  local name="$1"
+  local path="$2"
+  [ -x "$path" ] || command -v "$name" >/dev/null 2>&1
+}
+
+have node /usr/local/node-v24/bin/node || missing+=(node)
+have cargo "$HOME/.cargo/bin/cargo" || missing+=(cargo)
+have redis-server /usr/bin/redis-server || missing+=(redis-server)
+[ -d node_modules ] || missing+=(node_modules)
+
+if ((${#missing[@]})); then
+  printf 'DBM orb resume: missing %s. Run .agents/setup to repair the environment.\n' \
+    "${missing[*]}" >&2
+  exit 1
+fi
+
+printf 'DBM orb resume: toolchain and dependencies are ready.\n'
