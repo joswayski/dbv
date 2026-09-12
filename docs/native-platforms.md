@@ -133,16 +133,22 @@ memory (RSS and PSS, summed over the process tree), CPU, and one connect +
 query workload.
 
 Recorded on an orb (Linux, x86_64, release builds, 1400x900, median of three
-runs, same saved PostgreSQL profile):
+runs, same saved PostgreSQL profile). The Tauri column is the app from `main`,
+built from a pristine worktree; the branch build measured the same within
+run-to-run noise, and its React bundle is byte-identical.
 
-| Metric | Tauri + WebKitGTK | GTK4 native | Difference |
+| Metric | Tauri + WebKitGTK (main) | GTK4 native | Difference |
 | --- | --- | --- | --- |
-| Binary size | 30.8 MB | 11.8 MB | 2.6x smaller |
-| Window mapped | 0.29 s | 0.30 s | same |
-| First painted frame | 1.47 s | 0.83 s | 1.8x faster |
-| Idle PSS / RSS | 315 MB / 498 MB | 126 MB / 166 MB | 2.5x / 3.0x less |
-| After connect + query (PSS / RSS) | 368 MB / 555 MB | 159 MB / 202 MB | 2.3x / 2.7x less |
+| Binary size | 30.9 MB | 11.8 MB | 2.6x smaller |
+| Window mapped | 0.31 s | 0.30 s | same |
+| First painted frame | 1.55 s | 0.83 s | 1.9x faster |
+| Idle PSS / RSS | 304 MB / 492 MB | 126 MB / 166 MB | 2.4x / 3.0x less |
+| After connect + query (PSS / RSS) | 355 MB / 548 MB | 159 MB / 202 MB | 2.2x / 2.7x less |
 | Idle CPU | 0.25% | 0.00% | |
+
+On Linux, Tauri renders the React UI in WebKitGTK (GTK3 + WebKit2GTK); on macOS
+that webview is WKWebView and on Windows it is WebView2, so only the Linux
+comparison has been measured here.
 
 Two caveats matter when reading this:
 
