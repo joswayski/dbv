@@ -76,64 +76,24 @@ enum Bridge {
         return response
     }
 
-    private static func run<T>(_ body: @escaping () throws -> T) async throws -> T {
+    private static func run<T>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
         try await Task.detached(priority: .userInitiated, operation: body).value
     }
 
     private static func decode<T: Decodable>(_ response: String, as type: T.Type) throws -> T {
-        guard let data = response.data(using: .utf8) else {
-            throw BridgeError.message("the bridge returned invalid UTF-8")
+        guard let data = response.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw BridgeError.message("the bridge returned invalid JSON")
         }
-        let envelope = try JSONDecoder().decode(Envelope.self, from: data)
-        if let error = envelope.error {
+        if let error = object["error"] as? String {
             throw BridgeError.message(error)
         }
-        guard let value = envelope.ok, let payload = try? JSONSerialization.data(withJSONObject: value) else {
+        guard let value = object["ok"], !(value is NSNull) else {
             throw BridgeError.message("the bridge returned an unexpected response")
         }
+        let payload = try JSONSerialization.data(withJSONObject: value)
         return try JSONDecoder().decode(T.self, from: payload)
-    }
-}
-
-/// `{"ok": …}` or `{"error": "…"}`.
-private struct Envelope: Decodable {
-    let ok: AnyJSON?
-    let error: String?
-
-    private enum CodingKeys: String, CodingKey {
-        case ok, error
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        error = try container.decodeIfPresent(String.self, forKey: .error)
-        ok = container.contains(.ok) ? try container.decode(AnyJSON.self, forKey: .ok) : nil
-    }
-}
-
-/// Decodes any JSON value so it can be re-encoded into a concrete type.
-enum AnyJSON: Decodable {
-    case value(Any)
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() {
-            value = NSNull()
-        } else if let bool = try? container.decode(Bool.self) {
-            value = bool
-        } else if let int = try? container.decode(Int.self) {
-            value = int
-        } else if let double = try? container.decode(Double.self) {
-            value = double
-        } else if let string = try? container.decode(String.self) {
-            value = string
-        } else if let array = try? container.decode([AnyJSON].self) {
-            value = array.map(\.value)
-        } else if let dictionary = try? container.decode([String: AnyJSON].self) {
-            value = dictionary.mapValues(\.value)
-        } else {
-            throw BridgeError.message("the bridge returned an unsupported value")
-        }
     }
 }
 
