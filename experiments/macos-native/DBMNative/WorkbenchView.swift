@@ -116,7 +116,7 @@ struct WelcomeView: View {
         VStack(spacing: 10) {
             Text(title)
                 .font(Theme.titleFont)
-            Text(body)
+            Text(detail)
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.muted)
                 .multilineTextAlignment(.center)
@@ -128,7 +128,7 @@ struct WelcomeView: View {
         model.activeProfileId.flatMap { model.profile($0) }?.name ?? "No connection selected"
     }
 
-    private var body: String {
+    private var detail: String {
         guard let profileId = model.activeProfileId, let _ = model.profile(profileId) else {
             return model.profiles.isEmpty
                 ? "Create a connection from the sidebar to get started."
