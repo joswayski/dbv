@@ -100,9 +100,9 @@ Platform notes:
 - **Windows** paints everything with Direct2D, including a DirectWrite-backed
   text editor with caret, selection, and word movement, so no stock controls are
   involved. Column headers sort.
-- **macOS** uses SwiftUI views over the bridge. Its editor is a SwiftUI
-  `TextEditor`, so statement targeting currently runs the statement at the end
-  of the document; selection support needs an `NSTextView` wrapper.
+- **macOS** uses SwiftUI views over the bridge, with an AppKit `NSTextView`
+  editor so statement targeting follows the caret or selection like the other
+  frontends.
 
 ## Known gaps versus the Tauri app
 

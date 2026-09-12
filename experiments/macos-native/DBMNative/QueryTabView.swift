@@ -56,12 +56,13 @@ struct QueryTabView: View {
 
     private var editor: some View {
         VStack(alignment: .leading, spacing: 0) {
-            TextEditor(text: sqlBinding)
-                .font(Theme.monoFont)
-                .foregroundStyle(Theme.text)
-                .scrollContentBackground(.hidden)
-                .background(Theme.editor)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            SQLEditor(
+                text: sqlBinding,
+                onSelectionChange: { model.setSelection(tab.id, $0) },
+                onRun: { Task { await model.runQuery(tab.id) } }
+            )
+            .background(Theme.editor)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             Text(
                 engine.isRedis
                     ? "The command under the cursor runs · Command+Return · results capped at 10,000 rows"

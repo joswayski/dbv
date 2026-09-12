@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// DBM's dark workbench palette, matching the Tauri UI and the other native
@@ -25,6 +26,7 @@ enum Theme {
     static let inkOnAccent = Color(hex: "#03121d")
 
     static let monoFont = Font.system(size: 12.5, design: .monospaced)
+    static let monoNSFont = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
     static let uiFont = Font.system(size: 12.5)
     static let smallFont = Font.system(size: 11)
     static let eyebrowFont = Font.system(size: 9, weight: .heavy)

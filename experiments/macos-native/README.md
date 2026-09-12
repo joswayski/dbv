@@ -10,7 +10,7 @@ or the updater. The shipping macOS app is still Tauri.
 
 ```
 bridge/          Rust static library: JSON-in/JSON-out C ABI over dbm-engine
-DBMNative/       SwiftUI app (models, bridge wrapper, views)
+DBMNative/       SwiftUI app (models, bridge wrapper, views, AppKit SQL editor)
 build.sh         builds the bridge and compiles the .app bundle
 Info.plist       bundle metadata for the local test app
 ```
@@ -56,10 +56,6 @@ without macOS.
 
 ## Known gaps
 
-- Statement targeting runs the statement at the end of the document: SwiftUI's
-  `TextEditor` does not expose the caret or selection, so "statement under the
-  cursor" is not available yet. SQL selection support needs an `NSTextView`
-  wrapper.
 - Structured table filters are not implemented yet (ordering, paging, and CSV
   export are).
 - No staged inline edits, no tab rename, and no updater or installer

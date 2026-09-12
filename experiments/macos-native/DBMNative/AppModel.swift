@@ -51,6 +51,8 @@ final class AppModel: ObservableObject {
     @Published var loadingTables: Set<String> = []
 
     @Published var sqlText: [String: String] = [:]
+    /// Caret and selection per query tab, reported by the AppKit editor.
+    @Published var selections: [String: NSRange] = [:]
     @Published var queries: [String: QueryResponse] = [:]
     @Published var queryMeta: [String: String] = [:]
     @Published var queryErrors: [String: String] = [:]
@@ -211,6 +213,7 @@ final class AppModel: ObservableObject {
         orders.removeValue(forKey: id)
         tableStatus.removeValue(forKey: id)
         sqlText.removeValue(forKey: id)
+        selections.removeValue(forKey: id)
         queries.removeValue(forKey: id)
         queryMeta.removeValue(forKey: id)
         queryErrors.removeValue(forKey: id)
@@ -383,6 +386,12 @@ final class AppModel: ObservableObject {
 
     func useHistory(_ tabId: String, entry: QueryHistoryEntry) {
         sqlText[tabId] = entry.sql
+        selections[tabId] = NSRange(location: (entry.sql as NSString).length, length: 0)
+    }
+
+    /// The AppKit editor reports the caret and selection here.
+    func setSelection(_ tabId: String, _ range: NSRange) {
+        selections[tabId] = range
     }
 
     // MARK: - Profiles
@@ -467,12 +476,16 @@ final class AppModel: ObservableObject {
 
     /// Statement targeting, mirroring `sql_target.rs` from the shared crate.
     private func selectedOrCurrentStatement(_ text: String, tabId: String, engine: DatabaseEngine) -> String {
-        // SwiftUI's TextEditor does not expose the selection, so the macOS
-        // frontend runs the statement under the end of the document for now.
-        // (Listed as a gap in docs/native-platforms.md.)
+        let selection = selections[tabId] ?? NSRange(location: (text as NSString).length, length: 0)
+        if selection.length > 0, let range = Range(selection, in: text) {
+            let selected = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !selected.isEmpty { return selected }
+        }
+        let cursor = Range(selection, in: text).map { text.distance(from: text.startIndex, to: $0.lowerBound) }
+            ?? text.count
         let target = engine.isRedis
-            ? lineExecutionTarget(text, cursor: text.count)
-            : statementExecutionTarget(text, cursor: text.count)
+            ? lineExecutionTarget(text, cursor: cursor)
+            : statementExecutionTarget(text, cursor: cursor)
         return target ?? text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
