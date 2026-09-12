@@ -51,14 +51,9 @@ async fn save_profile(
 
 #[tauri::command]
 async fn delete_profile(state: tauri::State<'_, AppState>, profile_id: Uuid) -> Result<(), String> {
-    state.disconnect(profile_id).await;
     state
-        .credentials
-        .delete_password(profile_id)
-        .map_err(command_error)?;
-    state
-        .store
         .delete_profile(profile_id)
+        .await
         .map_err(command_error)
 }
 

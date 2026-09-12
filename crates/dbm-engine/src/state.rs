@@ -72,4 +72,15 @@ impl AppState {
     pub fn save_profile(&self, input: SaveProfileInput) -> AppResult<ConnectionProfile> {
         self.store.save_profile(&input)
     }
+
+    /// Disconnects, forgets the saved password, and deletes the profile.
+    ///
+    /// A credential store that is missing, locked, or denied must not block
+    /// deletion: the stale entry is keyed by the deleted profile id and is never
+    /// read again, while refusing to delete leaves the user stuck.
+    pub async fn delete_profile(&self, profile_id: Uuid) -> AppResult<()> {
+        self.disconnect(profile_id).await;
+        let _ = self.credentials.delete_password(profile_id);
+        self.store.delete_profile(profile_id)
+    }
 }

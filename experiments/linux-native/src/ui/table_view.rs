@@ -13,10 +13,10 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::bridge;
-use crate::format;
 use crate::ui::app::Ui;
 use crate::ui::dialogs;
 use crate::ui::grid::{default_column_width, DataGrid};
+use dbm_workbench::format;
 
 const FILTER_OPERATORS: [(FilterOperator, &str); 13] = [
     (FilterOperator::Equals, "Equals"),

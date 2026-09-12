@@ -1,0 +1,52 @@
+name: Native macOS frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "experiments/macos-native/**"
+      - "crates/dbm-engine/**"
+      - "crates/dbm-workbench/**"
+      - ".github/workflows/native-macos.yml"
+  pull_request:
+    paths:
+      - "experiments/macos-native/**"
+      - "crates/dbm-engine/**"
+      - "crates/dbm-workbench/**"
+      - ".github/workflows/native-macos.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    name: Rust bridge
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: experiments/macos-native/bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo test
+      - run: cargo clippy --all-targets -- -D warnings
+
+  app:
+    name: SwiftUI app
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: experiments/macos-native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+      - name: Typecheck the Swift sources
+        run: ./build.sh check
+      - name: Build the app bundle
+        run: ./build.sh release

@@ -845,6 +845,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbm-workbench"
+version = "0.1.0"
+dependencies = [
+ "dbm-engine",
+ "percent-encoding",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "dbus"
 version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

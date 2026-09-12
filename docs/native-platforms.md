@@ -32,119 +32,159 @@ apps/desktop/src-tauri        Tauri shell: IPC commands + updater (shipping)
 crates/dbm-engine             UI-independent engines (no toolkit dependencies)
   models, error, storage, keyring_store, state, session,
   postgres, mysql, redis
+crates/dbm-workbench          Shared presentation logic (no toolkit dependencies)
+  connection-URL import, CSV, engine presets, statement targeting,
+  schema-refresh summaries
         ▲
         │
-experiments/linux-native      GTK4 presentation (this repository)
-experiments/macos-native      SwiftUI/AppKit presentation (planned)
-experiments/windows-native    Win32 + DirectComposition presentation (planned)
+experiments/linux-native      GTK4 presentation (Rust)
+experiments/windows-native    Win32 + Direct2D/DirectWrite presentation (Rust)
+experiments/macos-native      SwiftUI/AppKit presentation + Rust C-ABI bridge
 ```
 
 - `crates/dbm-engine` is the single source of truth for profiles, credential
-  storage, sessions, schema trees, table pages, queries, and mutations. It
-  depends on no presentation toolkit, so every frontend shares one behavior.
-- The Tauri shell (`apps/desktop/src-tauri`) is now a thin command layer over
-  the engine; the React UI and its tests are unchanged.
-- Native frontends link the engine crate in-process. They do not speak Tauri
-  IPC, and they read and write the same local profile database and OS credential
-  store as the Tauri app, so a profile created in one appears in the other.
+  storage, sessions, schema trees, table pages, queries, and mutations.
+- `crates/dbm-workbench` holds the presentation logic that must behave the same
+  everywhere: presets, connection-URL parsing, CSV output, destructive-statement
+  detection, and statement/line targeting. Its tests run on every platform.
+- The Tauri shell is a thin command layer over the engine; the React UI and its
+  tests are unchanged.
+- Native frontends link the engine in-process (the macOS app links it through a
+  small JSON C ABI). They do not speak Tauri IPC, and they read and write the
+  same local profile database and OS credential store as the Tauri app, so a
+  profile created in one appears in the other.
 
 ## Status
 
 | Platform | Presentation | State |
 | --- | --- | --- |
-| Linux | Rust + GTK4, custom CSS | Vertical slice implemented and exercised against live PostgreSQL and Redis in an orb |
-| macOS | Swift + SwiftUI/AppKit + Rust bridge | Planned; not started in this repository |
-| Windows | Rust + Win32 + DirectComposition/Direct3D/Direct2D/DirectWrite | Planned; not started in this repository |
+| Linux | Rust + GTK4, custom CSS | Vertical slice implemented; exercised against live PostgreSQL 15 and Redis 7 under Xvfb |
+| Windows | Rust + Win32 + Direct2D/DirectWrite | Vertical slice implemented; compiles, clippy-clean, and links as a real `.exe`. Not run on Windows |
+| macOS | Swift + SwiftUI/AppKit + Rust bridge | Rust bridge implemented and tested on Linux; SwiftUI app written but **not compiled** yet |
 
-The Linux slice is an experiment: it builds and runs, but it is not wired into
-installers, the updater, or release artifacts.
+All three are experiments: none is wired into installers, the updater, or
+release artifacts.
 
-## What the Linux slice implements
+## What the native slices implement
 
-- **Connections:** the saved-profile list from the shared local store, per-profile
-  colors, connect/disconnect, database or Redis index switching, and connection
-  identity in the top bar.
+Shared behavior (identical across the three):
+
+- **Connections:** the saved-profile list from the shared local store,
+  per-profile colors, connect/disconnect, database or Redis index switching, and
+  connection identity in the top bar.
 - **Connection editor:** create, edit, test, and delete profiles, with engine
   presets, connection-URL import (`postgres://`, `postgresql://`, `mysql://`,
-  `mariadb://`, `redis://`, `rediss://`, `valkey://`, `valkeys://`), a color
-  picker, TLS mode, CA certificate path, read-only switch, and password storage
-  through the same OS credential store the Tauri app uses.
+  `mariadb://`, `redis://`, `rediss://`, `valkey://`, `valkeys://`), TLS mode,
+  CA certificate path, read-only switch, and password storage through the same
+  OS credential store the Tauri app uses.
 - **Schema tree:** database/schema/table/view nodes for PostgreSQL and MySQL,
   keyspace nodes grouped by Redis type, manual refresh with an added/removed
   summary.
-- **Query tabs:** statement-under-cursor or explicit selection targeting ported
-  from the React editor (including quoted strings, nested block comments, and
-  PostgreSQL dollar quotes), Ctrl+Enter, confirmation before destructive
-  statements, a 10,000-row cap, per-profile-and-database history, and a results
-  grid. Redis connections get a command workbench instead of SQL.
-- **Table tabs:** paginated previews (200 rows), structured filters with the same
-  thirteen operators as the Tauri UI, ordering, refresh, copy the current page
-  as CSV, and full filtered CSV export with a large-export confirmation.
+- **Query tabs:** statement targeting ported from the React editor (including
+  quoted strings, nested block comments, and PostgreSQL dollar quotes),
+  keyboard run (Ctrl/⌘+Enter), confirmation before destructive statements, a
+  10,000-row cap, per-profile-and-database history, and a results grid. Redis
+  connections get a command workbench instead of SQL.
+- **Table tabs:** paginated previews (200 rows), ordering, refresh, copy the
+  current page as CSV, and full filtered CSV export with a large-export
+  confirmation.
 - **Chrome:** DBM's dark surfaces and cyan accent, custom confirmation windows
-  for destructive actions, an error banner, and transient toasts. No stock GTK
-  confirmation dialogs are used for DBM actions.
+  for destructive actions, an error banner, and transient toasts. No stock
+  GTK/AppKit/Win32 confirmation dialogs are used for DBM actions.
+
+Platform notes:
+
+- **Linux** keeps the editor in a plain GTK `TextView` with statement targeting
+  from caret offsets, and offers a structured filter popover with the same
+  thirteen operators as the Tauri UI.
+- **Windows** paints everything with Direct2D, including a DirectWrite-backed
+  text editor with caret, selection, and word movement, so no stock controls are
+  involved. Column headers sort.
+- **macOS** uses SwiftUI views over the bridge. Its editor is a SwiftUI
+  `TextEditor`, so statement targeting currently runs the statement at the end
+  of the document; selection support needs an `NSTextView` wrapper.
 
 ## Known gaps versus the Tauri app
 
 - Staged inline edits and deletes, and the editable table viewer that opens for a
-  simple `SELECT * FROM table`, are not built yet. The shared engine already
-  supports mutations (including PostgreSQL `xmin` concurrency), so this is UI
-  work, not engine work.
-- Query tabs cannot be renamed or collapsed, and table columns cannot be
-  collapsed, resized, or sorted by clicking a header (ordering uses a toolbar
-  control instead).
-- Query history in one tab does not push a live update into other open tabs; each
-  tab refreshes its own history after it runs a statement.
-- There is no updater or installer integration for native builds yet.
-- macOS and Windows frontends do not exist yet.
+  simple `SELECT * FROM table`, are not built yet on any native frontend. The
+  shared engine already supports mutations (including PostgreSQL `xmin`
+  concurrency), so this is UI work, not engine work.
+- Structured table filters exist on Linux only; Windows and macOS do ordering,
+  paging, and CSV export.
+- Query tabs cannot be renamed or collapsed; table columns cannot be collapsed
+  or resized.
+- Query history in one tab does not push a live update into other open tabs.
+- There is no updater or installer integration for native builds, and none of
+  them is signed or notarized.
+- Windows has no draggable scrollbars and no mixed-DPI verification yet.
 
 ## Verification
 
-The native workspace is a separate Cargo workspace (`experiments/linux-native`)
-so the root `cargo test --workspace` stays toolkit-free on macOS and Windows.
+Each native frontend is a separate Cargo workspace, so the root
+`cargo test --workspace` stays toolkit-free on every platform.
 
 ```sh
-# Engine + Tauri shell (root workspace)
+# Engine + workbench logic + Tauri shell (root workspace)
 cargo fmt --all -- --check
 cargo test --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 
-# Linux native frontend
+# Linux frontend
 cd experiments/linux-native
-cargo fmt --all -- --check
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo build --release
+cargo fmt --all -- --check && cargo test && cargo clippy --all-targets -- -D warnings
+
+# Windows frontend (cross-checked from Linux, built on Windows)
+cd experiments/windows-native
+cargo check --target x86_64-pc-windows-msvc
+cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings
+
+# macOS bridge (runs anywhere) and app (macOS only)
+cd experiments/macos-native
+cargo test --manifest-path bridge/Cargo.toml
+./build.sh check        # typechecks the Swift sources on macOS
 ```
 
-`npm run check` still covers the React UI. `.github/workflows/native-linux.yml`
-runs the native checks on Ubuntu with GTK 4 development packages installed.
+Workflows: `native-linux.yml` (Ubuntu), `native-windows.yml` (Windows),
+`native-macos.yml` (bridge on Ubuntu, SwiftUI app on macOS).
 
-Unit tests cover the ported behavior that must match the React UI: CSV escaping,
-destructive-statement detection, engine presets, connection-URL parsing, and
-statement/line targeting. Live behavior was verified by hand in an orb against
-PostgreSQL 15 and Redis 7 with a real profile store, a session keyring, and a
-headless X server: connect, schema tree, query execution with results, table
-paging, Redis keyspace and `PING`, and the connection editor.
+What has actually been verified:
 
-Behavior parity with the Tauri UI is asserted only where tests exist. Compilation
-or a static screenshot is not proof of interaction parity, and none of the
-macOS/Windows claims above are verified on those operating systems.
+- Root workspace: formatting, strict clippy, and 35 tests (engine, workbench
+  logic, Tauri shell).
+- Linux frontend: 16 logic tests before the workbench crate was extracted,
+  strict clippy, a release build, and a hand-run session against live PostgreSQL
+  15 and Redis 7 under Xvfb (connect, schema tree, query results, table paging,
+  Redis keyspace and `PING`, connection editor).
+- Windows frontend: `cargo check` for the MSVC target, strict clippy for the GNU
+  target, and a mingw release link. A Wine smoke run shows the custom chrome and
+  layout, but Wine's Direct2D does not rasterize text, so glyph rendering is
+  unverified. Nothing has been run on Windows.
+- macOS bridge: tests for request validation, profile round-trip, and URL import,
+  run on Linux. The SwiftUI layer has not been compiled; the macOS CI job and
+  `./build.sh check` are the first places it will be typechecked.
 
-## Running the Linux frontend
+Compilation or a static screenshot is not proof of interaction parity. Treat
+every "implemented" row above as "written and reviewed, pending a run on that
+platform".
+
+## Running the frontends
 
 ```sh
-cd experiments/linux-native
-cargo run
+# Linux (GTK 4.6+ and a display server; .agents/setup installs libgtk-4-dev)
+cd experiments/linux-native && cargo run
+
+# Windows
+cd experiments/windows-native && cargo run --release
+
+# macOS (macOS 13+, Xcode command line tools)
+cd experiments/macos-native && ./build.sh release && open "build/DBM Native.app"
 ```
 
-Requirements: GTK 4.6 or newer development packages, and a display server.
-`.agents/setup` installs `libgtk-4-dev` for Amp orbs; on Debian/Ubuntu:
-
-```sh
-sudo apt-get install libgtk-4-dev
-```
-
-The app opens with the same profile list as the Tauri app. Passwords use the
+All three open with the same profile list as the Tauri app. Passwords use the
 operating system credential store, so a desktop keyring (GNOME Keyring, KWallet,
-or similar) must be available for stored passwords to resolve.
+Windows Credential Manager, or the macOS Keychain) must be available for stored
+passwords to resolve. Deleting a profile no longer fails when the credential
+store is unavailable: the profile is removed and the stale entry, keyed by the
+deleted profile id, is simply never read again. That behavior lives in
+`AppState::delete_profile` so every frontend shares it.

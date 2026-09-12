@@ -1,7 +1,4 @@
-use std::path::PathBuf;
-
-#[cfg(test)]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use directories::ProjectDirs;
@@ -32,7 +29,8 @@ impl LocalStore {
         Ok(store)
     }
 
-    #[cfg(test)]
+    /// Opens a store at an explicit path. Used by tests and tooling that must
+    /// not touch the user's profile database.
     pub fn from_path(path: impl AsRef<Path>) -> AppResult<Self> {
         let store = Self {
             path: path.as_ref().to_path_buf(),

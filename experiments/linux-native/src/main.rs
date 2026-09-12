@@ -5,9 +5,6 @@
 //! Tauri app. See `docs/native-platforms.md` for status and parity notes.
 
 mod bridge;
-mod connection_url;
-mod format;
-mod sql_target;
 mod state;
 mod theme;
 mod ui;

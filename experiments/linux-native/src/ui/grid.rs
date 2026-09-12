@@ -6,7 +6,7 @@ use gtk4::glib;
 use gtk4::prelude::*;
 use serde_json::Value;
 
-use crate::format::display_value;
+use dbm_workbench::format::display_value;
 
 /// One grid row. `None` marks a SQL NULL so the cell can render it muted.
 #[derive(Clone)]

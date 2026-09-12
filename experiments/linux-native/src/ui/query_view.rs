@@ -15,11 +15,11 @@ use gtk4::prelude::*;
 use uuid::Uuid;
 
 use crate::bridge;
-use crate::format;
-use crate::sql_target;
 use crate::ui::app::Ui;
 use crate::ui::dialogs;
 use crate::ui::grid::{default_column_width, DataGrid};
+use dbm_workbench::format;
+use dbm_workbench::sql_target;
 
 struct QueryState {
     profile_id: Uuid,

@@ -1,0 +1,16 @@
+[package]
+name = "dbm-workbench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+dbm-engine = { path = "../dbm-engine" }
+percent-encoding = "2"
+serde_json.workspace = true
+url = "2"
+
+[lints]
+workspace = true

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use gtk4 as gtk;
 
-use crate::format::DEFAULT_CONNECTION_COLOR;
+use dbm_workbench::format::DEFAULT_CONNECTION_COLOR;
 
 thread_local! {
     static COLOR_CLASSES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());

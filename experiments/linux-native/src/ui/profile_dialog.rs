@@ -11,9 +11,9 @@ use gtk4::prelude::*;
 use uuid::Uuid;
 
 use crate::bridge;
-use crate::connection_url;
-use crate::format;
 use crate::ui::app::Ui;
+use dbm_workbench::connection_url;
+use dbm_workbench::format;
 
 struct FormState {
     input: SaveProfileInput,

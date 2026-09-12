@@ -13,10 +13,10 @@ use gtk4::prelude::*;
 use uuid::Uuid;
 
 use crate::bridge;
-use crate::format;
 use crate::state::{Tab, TabId, TabKind, Workspace};
 use crate::theme;
 use crate::ui::{dialogs, profile_dialog, query_view, table_view};
+use dbm_workbench::format;
 
 const SIDEBAR_WIDTH: i32 = 320;
 const COLLAPSED_SIDEBAR_WIDTH: i32 = 52;

@@ -13,7 +13,8 @@
 - `apps/desktop/ui/src` is the React frontend (Vite, Zustand, CodeMirror SQL editor).
 - `apps/desktop/src-tauri/src` is the Tauri command layer (IPC and updates) for the desktop app.
 - `crates/dbm-engine` is the toolkit-independent engine crate (profiles, storage, credentials, sessions, PostgreSQL/MySQL/Redis adapters, models). Frontends share it; it must not depend on Tauri or any UI framework.
-- `experiments/linux-native` is an in-development GTK4 frontend and a separate Cargo workspace, so root checks stay toolkit-free on macOS and Windows. See `docs/native-platforms.md`.
+- `crates/dbm-workbench` is the toolkit-independent presentation logic (engine presets, connection-URL import, CSV, statement targeting, schema-refresh summaries). Frontends share it; it must not depend on a UI toolkit.
+- `experiments/linux-native` (GTK4), `experiments/windows-native` (Win32 + Direct2D), and `experiments/macos-native` (SwiftUI + a Rust C-ABI bridge) are in-development native frontends, each a separate Cargo workspace so root checks stay toolkit-free. See `docs/native-platforms.md`.
 - `docs/releases.md` contains public-release signing, notarization, and publishing requirements.
 - `scripts` contains build and install helpers.
 - There is no separate monorepo package for the UI; frontend and backend live under `apps/desktop`.

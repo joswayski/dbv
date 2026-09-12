@@ -333,14 +333,18 @@ mod tests {
             .windows(4)
             .position(|window| window == ['b', 'o', 'd', 'y'])
             .unwrap();
-        assert!(sql_execution_target(&sql, body, body)
-            .is_some_and(|target| target.sql.contains("SELECT $$body;still body$$;")));
+        assert!(
+            sql_execution_target(&sql, body, body)
+                .is_some_and(|target| target.sql.contains("SELECT $$body;still body$$;"))
+        );
         let three = characters
             .iter()
             .rposition(|character| *character == '3')
             .unwrap();
-        assert!(sql_execution_target(&sql, three, three)
-            .is_some_and(|target| target.sql.contains("SELECT 3;")));
+        assert!(
+            sql_execution_target(&sql, three, three)
+                .is_some_and(|target| target.sql.contains("SELECT 3;"))
+        );
     }
 
     #[test]

@@ -1,0 +1,44 @@
+[workspace]
+
+[package]
+name = "dbm-native-windows"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "Win32 + Direct2D native DBM frontend (in development)"
+
+[[bin]]
+name = "dbm-native"
+path = "src/main.rs"
+
+[dependencies]
+dbm-engine = { path = "../../crates/dbm-engine" }
+dbm-workbench = { path = "../../crates/dbm-workbench" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+uuid = { version = "1", features = ["v4"] }
+windows = { version = "0.58", features = [
+    "Foundation_Numerics",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_SystemInformation",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+strip = true
