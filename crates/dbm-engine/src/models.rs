@@ -119,6 +119,33 @@ pub struct SaveProfileInput {
     pub password: Option<String>,
 }
 
+impl SaveProfileInput {
+    /// Builds a validated profile from this input, preserving `created_at` when
+    /// editing an existing profile. Frontends share this so test-connection,
+    /// save, and import paths validate identically.
+    pub fn to_profile(&self, existing: Option<&ConnectionProfile>) -> AppResult<ConnectionProfile> {
+        let now = Utc::now();
+        let profile = ConnectionProfile {
+            id: self.id.unwrap_or_else(Uuid::new_v4),
+            name: self.name.trim().to_owned(),
+            color: self.color.clone(),
+            engine: self.engine,
+            host: self.host.trim().to_owned(),
+            port: self.port,
+            username: self.username.trim().to_owned(),
+            default_database: self.default_database.trim().to_owned(),
+            tls_mode: self.tls_mode.clone(),
+            ca_cert_path: self.ca_cert_path.clone(),
+            ssh: self.ssh.clone(),
+            read_only: self.read_only,
+            created_at: existing.map_or(now, |profile| profile.created_at),
+            updated_at: now,
+        };
+        profile.validate()?;
+        Ok(profile)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileSummary {
@@ -170,7 +197,7 @@ pub struct TableMetadata {
     pub has_xmin: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FilterOperator {
     Equals,
@@ -196,7 +223,7 @@ pub struct FilterCondition {
     pub value: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrderSpec {
     pub column: String,

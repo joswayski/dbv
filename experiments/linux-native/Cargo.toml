@@ -1,0 +1,22 @@
+[workspace]
+
+[package]
+name = "dbm-native-linux"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "GTK4 platform-native DBM frontend (in development)"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+dbm-engine = { path = "../../crates/dbm-engine" }
+gtk4 = { version = "0.9", default-features = false, features = ["v4_8"] }
+percent-encoding = "2"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+strip = true

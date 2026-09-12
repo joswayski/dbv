@@ -807,14 +807,8 @@ name = "dbm-desktop"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "directories",
- "keyring",
- "mysql_async",
- "native-tls",
+ "dbm-engine",
  "parking_lot",
- "postgres-native-tls",
- "redis",
- "rusqlite",
  "serde",
  "serde_json",
  "tauri",
@@ -823,11 +817,30 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-opener",
  "tauri-plugin-updater",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "dbm-engine"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "directories",
+ "keyring",
+ "mysql_async",
+ "native-tls",
+ "postgres-native-tls",
+ "redis",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tokio-postgres",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 

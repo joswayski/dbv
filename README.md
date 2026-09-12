@@ -21,6 +21,21 @@ npm run check
 npm run dev
 ```
 
+The Rust workspace has two members: `crates/dbm-engine`, the toolkit-independent
+database engines and local storage, and `apps/desktop/src-tauri`, the Tauri shell
+that exposes them to the React UI. The engine crate depends on no presentation
+framework, so the frontend experiment described below can link it directly. See
+[docs/native-platforms.md](docs/native-platforms.md) for that work.
+
+The optional Linux GTK4 frontend experiment is a separate Cargo workspace so the
+root checks stay toolkit-free on every platform:
+
+```sh
+cd experiments/linux-native
+cargo test
+cargo run          # requires libgtk-4-dev and a display server
+```
+
 ### Amp orbs
 
 Amp orbs run [`.agents/setup`](.agents/setup) to prepare a fresh machine: it installs Tauri's
@@ -119,6 +134,25 @@ Passwords are stored in the operating system credential store when available.
 
 The browser preview used by Vite has a small in-memory mock so the layout can be
 worked on without launching Tauri. The real desktop app uses the Rust commands.
+
+## Platform-native frontends (in development)
+
+The shipping app above is Tauri plus React. A separate, in-development effort
+replaces only the presentation layer with platform-native, custom-rendered
+frontends that link `crates/dbm-engine` directly, without a webview:
+
+- **Linux:** a GTK4 frontend under `experiments/linux-native` currently covers
+  saved connections and the connection editor, schema/keyspace browsing, query
+  tabs with history and results, paginated table browsing with filters,
+  ordering, and CSV export, and Redis command tabs.
+- **macOS** (SwiftUI/AppKit) and **Windows** (Win32/DirectComposition) frontends
+  are planned and not implemented.
+
+This is not a replacement release: it is not wired into installers, the updater,
+or published artifacts, and several Tauri features (staged inline edits, tab
+rename/collapse, header-click sorting) are not in the native UI yet. Status,
+gaps, and verification rules live in
+[docs/native-platforms.md](docs/native-platforms.md).
 
 ## Deliberate follow-ups
 

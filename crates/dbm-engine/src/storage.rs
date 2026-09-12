@@ -113,28 +113,11 @@ impl LocalStore {
     }
 
     pub fn save_profile(&self, input: &SaveProfileInput) -> AppResult<ConnectionProfile> {
-        let id = input.id.unwrap_or_else(Uuid::new_v4);
-        let now = Utc::now();
-        let created_at = self
-            .get_profile(id)?
-            .map_or(now, |profile| profile.created_at);
-        let profile = ConnectionProfile {
-            id,
-            name: input.name.trim().to_owned(),
-            color: input.color.clone(),
-            engine: input.engine,
-            host: input.host.trim().to_owned(),
-            port: input.port,
-            username: input.username.trim().to_owned(),
-            default_database: input.default_database.trim().to_owned(),
-            tls_mode: input.tls_mode.clone(),
-            ca_cert_path: input.ca_cert_path.clone(),
-            ssh: input.ssh.clone(),
-            read_only: input.read_only,
-            created_at,
-            updated_at: now,
+        let existing = match input.id {
+            Some(id) => self.get_profile(id)?,
+            None => None,
         };
-        profile.validate()?;
+        let profile = input.to_profile(existing.as_ref())?;
 
         let ssh_json = profile
             .ssh
