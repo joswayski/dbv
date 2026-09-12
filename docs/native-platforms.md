@@ -134,10 +134,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cd experiments/linux-native
 cargo fmt --all -- --check && cargo test && cargo clippy --all-targets -- -D warnings
 
-# Windows frontend (cross-checked from Linux, built on Windows)
+# Windows frontend (cross-checked from Linux, built and tested on Windows)
 cd experiments/windows-native
 cargo check --target x86_64-pc-windows-msvc
 cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings
+cargo test --target x86_64-pc-windows-gnu   # needs a Wine runner on Linux
 
 # macOS bridge (runs anywhere) and app (macOS only)
 cd experiments/macos-native
@@ -150,20 +151,27 @@ Workflows: `native-linux.yml` (Ubuntu), `native-windows.yml` (Windows),
 
 What has actually been verified:
 
-- Root workspace: formatting, strict clippy, and 35 tests (engine, workbench
+- Root workspace: formatting, strict clippy, and 38 tests (engine, workbench
   logic, Tauri shell).
-- Linux frontend: 16 logic tests before the workbench crate was extracted,
-  strict clippy, a release build, and a hand-run session against live PostgreSQL
-  15 and Redis 7 under Xvfb (connect, schema tree, query results, table paging,
-  Redis keyspace and `PING`, connection editor).
+- Linux frontend: strict clippy, a release build, and a hand-run session against
+  live PostgreSQL 15 and Redis 7 under Xvfb (connect, schema tree, query
+  results, table paging, Redis keyspace and `PING`, connection editor).
 - Windows frontend: `cargo check` for the MSVC target, strict clippy for the GNU
-  target, and a mingw release link. A Wine 11 smoke run renders the custom
-  chrome, layout, and text, but Wine substitutes Segoe UI and drops a few
-  small-glyph eyebrow labels, so text rendering and interaction are still
-  unverified. Nothing has been run on Windows.
+  target, a mingw release link, and unit tests run under Wine. A Wine 11 run
+  exercised the whole workbench against live PostgreSQL 15 and Redis 7:
+  connecting, the schema tree, typing in the DirectWrite editor, running SQL and
+  Redis commands with Ctrl+Enter, the results grid, and table pages. Wine
+  substitutes Segoe UI and drops a few glyphs in the 9 px eyebrow labels;
+  everything else rendered. Nothing has been run on Windows itself.
 - macOS bridge: tests for request validation, profile round-trip, and URL import,
   run on Linux. The SwiftUI layer typechecks and links into an app bundle on the
   macOS CI runner (macOS 14, arm64); it has not been launched.
+
+The adapters decode PostgreSQL `numeric`, `uuid`, and `bytea` values directly:
+`uuid` and `bytea` use tokio-postgres' built-in support, and `numeric` has its
+own decoder because this dependency tree has no decimal feature for it. The
+numeric decoder has unit tests, and all three were checked against live
+PostgreSQL from the Linux and Windows frontends.
 
 Compilation or a static screenshot is not proof of interaction parity. Treat
 every "implemented" row above as "written and reviewed, pending a run on that

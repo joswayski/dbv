@@ -974,15 +974,17 @@ impl Ui {
                 grid.right,
                 grid.bottom,
             ));
-            r.translate(-h_scroll, header_height - v_scroll);
+            r.translate(grid.left - h_scroll, grid.top + header_height - v_scroll);
 
             if let Some(page) = &page {
                 let mut row_y = 0.0;
-                for (row_index, row) in page.rows.iter().enumerate() {
-                    let _ = row_index;
+                for row in &page.rows {
                     let mut cell_x = 0.0;
-                    for (column_index, value) in row.iter().enumerate() {
+                    // Only the metadata columns are shown: PostgreSQL table
+                    // pages carry a trailing `__dbm_xmin` value for mutations.
+                    for (column_index, _) in columns.iter().enumerate() {
                         let width = widths.get(column_index).copied().unwrap_or(120.0);
+                        let value = row.get(column_index).unwrap_or(&serde_json::Value::Null);
                         let cell = rect(
                             cell_x + 6.0,
                             row_y,
@@ -1013,7 +1015,7 @@ impl Ui {
                 grid.right,
                 grid.top + header_height,
             ));
-            r.translate(-h_scroll, 0.0);
+            r.translate(grid.left - h_scroll, grid.top);
             let _ = r.fill_rect(
                 rect(0.0, 0.0, total_width, header_height),
                 theme::PANEL,
@@ -1251,13 +1253,7 @@ impl Ui {
             },
         );
         self.field_rect(field_id, editor_view);
-        self.region(
-            editor_view,
-            Action::ClickField {
-                field: field_id,
-                x: editor_view.left,
-            },
-        );
+        self.region(editor_view, Action::ClickField { field: field_id });
         let line_height = r.line_height(Font::Mono);
         let first_line = (editor_scroll / line_height).floor().max(0.0) as usize;
         let visible_lines = (height(editor_view) / line_height).ceil() as usize + 1;
@@ -1500,7 +1496,7 @@ impl Ui {
                 self.scroll_region(ViewId::Results(tab_id), grid);
                 self.scroll_region(ViewId::ResultsX(tab_id), grid);
                 let _ = r.push_clip(grid);
-                r.translate(-h_scroll, -v_scroll);
+                r.translate(grid.left - h_scroll, grid.top - v_scroll);
                 let row_height = 24.0;
                 let _ = r.fill_rect(rect(0.0, 0.0, total_width, 24.0), theme::PANEL, 1.0);
                 let mut cell_x = 0.0;
@@ -1520,8 +1516,9 @@ impl Ui {
                 let mut row_y = 24.0;
                 for row in &response.rows {
                     let mut cell_x = 0.0;
-                    for (index, value) in row.iter().enumerate() {
+                    for (index, _) in response.columns.iter().enumerate() {
                         let width = widths.get(index).copied().unwrap_or(120.0);
+                        let value = row.get(index).unwrap_or(&serde_json::Value::Null);
                         let text = format::display_value(value);
                         let _ = r.draw_text_ellipsis(
                             &text,
@@ -1703,12 +1700,6 @@ impl Ui {
             );
         }
         self.field_rect(field_id, inner);
-        self.region(
-            bounds,
-            Action::ClickField {
-                field: field_id,
-                x: bounds.left,
-            },
-        );
+        self.region(bounds, Action::ClickField { field: field_id });
     }
 }

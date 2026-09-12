@@ -148,7 +148,12 @@ pub fn csv_document(columns: &[String], rows: &[Vec<Value>]) -> String {
             .map(|name| Value::String(name.clone()))
             .collect::<Vec<_>>(),
     ));
-    lines.extend(rows.iter().map(|row| csv_line(row)));
+    // Table pages can carry a trailing `__dbm_xmin` value for mutations; the
+    // document only has columns for the visible ones.
+    lines.extend(
+        rows.iter()
+            .map(|row| csv_line(&row[..row.len().min(columns.len())])),
+    );
     lines.join("\n")
 }
 
@@ -397,6 +402,16 @@ mod tests {
         let document = csv_document(
             &["id".to_owned(), "name".to_owned()],
             &[vec![json!(1), json!("Ada")]],
+        );
+        assert_eq!(document, "id,name\n1,Ada");
+    }
+
+    #[test]
+    fn csv_document_drops_extra_table_page_values() {
+        // PostgreSQL table pages append `__dbm_xmin` after the real columns.
+        let document = csv_document(
+            &["id".to_owned(), "name".to_owned()],
+            &[vec![json!(1), json!("Ada"), json!("728")]],
         );
         assert_eq!(document, "id,name\n1,Ada");
     }

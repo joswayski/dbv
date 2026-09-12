@@ -160,10 +160,10 @@ impl TextField {
             }
             CaretMotion::WordRight => {
                 let mut index = target;
-                while index < length && !characters[index].is_whitespace() {
+                while index < length && characters[index].is_whitespace() {
                     index += 1;
                 }
-                while index < length && characters[index].is_whitespace() {
+                while index < length && !characters[index].is_whitespace() {
                     index += 1;
                 }
                 target = index;

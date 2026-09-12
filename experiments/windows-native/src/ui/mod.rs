@@ -83,7 +83,6 @@ pub enum Action {
     },
     ClickField {
         field: FieldId,
-        x: f32,
     },
     ModalEngine(DatabaseEngine),
     ModalTls(usize),
@@ -144,7 +143,6 @@ pub struct QueryState {
     pub profile_id: Uuid,
     pub database: String,
     pub engine: DatabaseEngine,
-    pub editor: TextField,
     pub executed_sql: Option<String>,
     pub response: Option<QueryResponse>,
     pub history: Vec<QueryHistoryEntry>,
@@ -740,13 +738,13 @@ impl Ui {
         let tab_id = self.next_tab_id;
         self.next_tab_id += 1;
         let editor = TextField::with_text(format::default_query_text(engine), true);
+        self.fields.insert(FieldId::Query(tab_id), editor);
         self.queries.insert(
             tab_id,
             QueryState {
                 profile_id,
                 database: database.clone(),
                 engine,
-                editor,
                 executed_sql: None,
                 response: None,
                 history: Vec::new(),
@@ -763,6 +761,7 @@ impl Ui {
         });
         self.active_tab = Some(tab_id);
         self.active_profile = Some(profile_id);
+        self.focus = Some(FieldId::Query(tab_id));
         self.load_history(tab_id);
     }
 
@@ -907,9 +906,9 @@ impl Ui {
             .find(|region| contains(region.rect, x, y))
             .map(|region| region.action.clone());
         self.pressed = action.clone();
-        if let Some(Action::ClickField { field, x: field_x }) = action {
+        if let Some(Action::ClickField { field, .. }) = action {
             self.focus = Some(field);
-            self.set_caret_from_click(r, field, field_x);
+            self.set_caret_from_click(r, field, x, y);
         }
     }
 
@@ -1036,23 +1035,55 @@ impl Ui {
         true
     }
 
-    fn set_caret_from_click(&mut self, r: &mut Renderer, field: FieldId, x: f32) {
+    fn set_caret_from_click(&mut self, r: &mut Renderer, field: FieldId, x: f32, y: f32) {
         let Some(rect) = self.field_rects.get(&field).copied() else {
-            return;
-        };
-        let Some(text) = self.fields.get_mut(&field) else {
             return;
         };
         let font = match field {
             FieldId::Query(_) => theme::Font::Mono,
             _ => theme::Font::Ui,
         };
-        let scroll = text.scroll;
-        let local = x - rect.left + scroll - 6.0;
-        if let Ok(index) = r.caret_index(&text.text, local.max(0.0), font) {
-            text.caret = index;
-            text.anchor = index;
-        }
+        let view_scroll = match field {
+            FieldId::Query(tab) => self.scroll_offset(ViewId::Editor(tab)),
+            _ => 0.0,
+        };
+        let line_height = r.line_height(font);
+        let Some(text) = self.fields.get_mut(&field) else {
+            return;
+        };
+        let local = x - rect.left + text.scroll - 6.0;
+        let index = if text.multiline {
+            // Multi-line editors place the caret on the clicked line, not at
+            // the start of the document.
+            let lines: Vec<&str> = text.text.split('\n').collect();
+            let line = (((y - rect.top - 8.0 + view_scroll) / line_height)
+                .floor()
+                .max(0.0)) as usize;
+            let line = line.min(lines.len().saturating_sub(1));
+            let before: usize = lines
+                .iter()
+                .take(line)
+                .map(|value| value.chars().count() + 1)
+                .sum();
+            let column = if local >= r.text_width(lines[line], font).unwrap_or(0.0) {
+                // Clicking past the end of the line lands on the last column
+                // instead of relying on the hit test's trailing behavior.
+                lines[line].chars().count()
+            } else {
+                r.caret_index(lines[line], local.max(0.0), font)
+                    .unwrap_or(0)
+            };
+            before + column
+        } else {
+            if local >= r.text_width(&text.text, font).unwrap_or(0.0) {
+                text.text.chars().count()
+            } else {
+                r.caret_index(&text.text, local.max(0.0), font).unwrap_or(0)
+            }
+        };
+        let index = index.min(text.text.chars().count());
+        text.caret = index;
+        text.anchor = index;
     }
 
     /// Ctrl+A / Ctrl+C / Ctrl+X / Ctrl+V for the focused field.
@@ -1093,10 +1124,13 @@ impl Ui {
         let Some(state) = self.queries.get(&tab) else {
             return String::new();
         };
-        let text = &state.editor.text;
-        let (from, to) = match state.editor.selection() {
+        let Some(editor) = self.fields.get(&FieldId::Query(tab)) else {
+            return String::new();
+        };
+        let text = &editor.text;
+        let (from, to) = match editor.selection() {
             Some((start, end)) => (start, end),
-            None => (state.editor.caret, state.editor.caret),
+            None => (editor.caret, editor.caret),
         };
         let target = if state.engine == DatabaseEngine::Redis {
             dbm_workbench::sql_target::line_execution_target(text, from, to)
@@ -1182,6 +1216,10 @@ impl Ui {
                 if let Some(tab) = self.tabs.iter().find(|tab| tab.id == tab_id) {
                     self.active_profile = Some(tab.profile_id);
                 }
+                self.focus = self
+                    .queries
+                    .contains_key(&tab_id)
+                    .then_some(FieldId::Query(tab_id));
             }
             Action::CloseTab(tab_id) => self.close_tab(tab_id),
             Action::NewQuery => {
@@ -1264,9 +1302,7 @@ impl Ui {
                     .and_then(|state| state.history.get(index))
                     .map(|entry| entry.sql.clone());
                 if let Some(sql) = sql {
-                    if let Some(state) = self.queries.get_mut(&tab) {
-                        state.editor.set_text(sql);
-                    }
+                    set_field(&mut self.fields, FieldId::Query(tab), &sql);
                     self.focus = Some(FieldId::Query(tab));
                 }
             }

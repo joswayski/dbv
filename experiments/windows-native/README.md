@@ -75,8 +75,14 @@ the toolchain Microsoft ships, because checking does not link.
 ## Verification status
 
 `cargo check --target x86_64-pc-windows-msvc`, `cargo clippy --target
-x86_64-pc-windows-gnu -D warnings`, and a mingw release link all pass on Linux,
-which catches API misuse at the type level.
+x86_64-pc-windows-gnu -D warnings`, `cargo test` (on Windows), and a mingw
+release link all pass, which catches API misuse at the type level. On Linux the
+unit tests run under Wine with:
+
+```sh
+CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine \
+  cargo test --target x86_64-pc-windows-gnu
+```
 
 For a smoke test without a Windows machine, the mingw build runs under Wine.
 Wine 11 renders the chrome, layout, and text; it substitutes Segoe UI and drops
@@ -89,6 +95,10 @@ x86_64-w64-mingw32-gcc -shared -O2 -o bcryptprimitives.dll \
   tools/bcryptprimitives_stub.c -lbcrypt
 wine dbm-native.exe
 ```
+
+A Wine run with live PostgreSQL 15 and Redis 7 exercised connecting, the schema
+tree, typing in the DirectWrite editor, running SQL and Redis commands with
+Ctrl+Enter, the results grid, and table pages.
 
 Nothing here has been run on Windows itself. Capture behavior, keychain
 integration, DPI, and text rendering still need a real Windows run.

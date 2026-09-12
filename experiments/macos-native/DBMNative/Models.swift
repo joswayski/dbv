@@ -344,7 +344,9 @@ enum JSONValue: Codable, Hashable {
 enum CSV {
     static func document(columns: [String], rows: [[JSONValue]]) -> String {
         var lines = [line(columns.map { .string($0) })]
-        lines.append(contentsOf: rows.map(line))
+        // Table pages can carry a trailing `__dbm_xmin` value for mutations;
+        // the document only has columns for the visible ones.
+        lines.append(contentsOf: rows.map { line(Array($0.prefix(columns.count))) })
         return lines.joined(separator: "\n")
     }
 
