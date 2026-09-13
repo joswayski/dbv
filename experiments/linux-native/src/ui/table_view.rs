@@ -58,11 +58,20 @@ struct TableViewState {
     previous_button: gtk::Button,
     next_button: gtk::Button,
     refresh_button: gtk::Button,
-    filter_popover: gtk::Popover,
+    copy_button: gtk::Button,
+    export_button: gtk::Button,
+    limit_input: gtk::SpinButton,
     filter_list: gtk::Box,
     order_dropdown: gtk::DropDown,
     order_descending: gtk::ToggleButton,
     page: Option<TablePage>,
+}
+
+pub fn control_label(text: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("control-label");
+    label.set_xalign(0.0);
+    label
 }
 
 pub fn build(
@@ -95,42 +104,55 @@ pub fn build(
     copy_button.add_css_class("secondary-button");
     let export_button = gtk::Button::with_label("Export CSV");
     export_button.add_css_class("secondary-button");
-    let filter_button = gtk::Button::with_label("Filters");
-    filter_button.add_css_class("secondary-button");
-
-    let filter_popover = gtk::Popover::new();
-    filter_popover.set_parent(&filter_button);
-    filter_popover.set_has_arrow(true);
-    filter_popover.add_css_class("filter-popover");
-
     let filter_list = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    let add_filter = gtk::Button::with_label("Add filter");
+    let add_filter = gtk::Button::with_label("+ Add filter");
     add_filter.add_css_class("link-button");
     add_filter.set_halign(gtk::Align::Start);
-    let apply_filters = gtk::Button::with_label("Apply");
+    let apply_filters = gtk::Button::with_label("Apply filters");
     apply_filters.add_css_class("primary-button");
+    apply_filters.add_css_class("apply-filters-button");
     let clear_filters = gtk::Button::with_label("Clear");
     clear_filters.add_css_class("secondary-button");
-    let filter_actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    filter_actions.set_halign(gtk::Align::End);
-    filter_actions.append(&clear_filters);
-    filter_actions.append(&apply_filters);
-    let filter_content = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    filter_content.set_width_request(420);
-    filter_content.append(&filter_list);
-    filter_content.append(&add_filter);
-    filter_content.append(&filter_actions);
-    filter_popover.set_child(Some(&filter_content));
 
     let order_dropdown = gtk::DropDown::from_strings(&["Default order"]);
     order_dropdown.set_tooltip_text(Some("Order rows by a column"));
+    order_dropdown.add_css_class("sort-column-select");
     let order_descending = gtk::ToggleButton::with_label("↓");
     order_descending.add_css_class("secondary-button");
     order_descending.set_tooltip_text(Some("Toggle descending order"));
-    let order_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    order_box.append(&gtk::Label::new(Some("Order")));
-    order_box.append(&order_dropdown);
-    order_box.append(&order_descending);
+    let limit_input = gtk::SpinButton::with_range(1.0, 10_000.0, 50.0);
+    limit_input.set_value(f64::from(format::MAX_PREVIEW_ROWS));
+    limit_input.set_tooltip_text(Some("Rows fetched per page"));
+    let limit_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    limit_box.append(&control_label("Preview limit"));
+    limit_box.append(&limit_input);
+    let sort_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    sort_box.append(&control_label("Sort by"));
+    sort_box.append(&order_dropdown);
+    let direction_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    direction_box.append(&control_label("Direction"));
+    direction_box.append(&order_descending);
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    controls.add_css_class("table-query-controls");
+    controls.append(&limit_box);
+    controls.append(&sort_box);
+    controls.append(&direction_box);
+    controls.append(&clear_filters);
+    controls.append(&apply_filters);
+    let filter_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    filter_header.add_css_class("filter-panel-header");
+    let filter_title = gtk::Label::new(Some("Filters"));
+    filter_title.add_css_class("filter-title");
+    let filter_join = gtk::Label::new(Some("All filters must match"));
+    filter_join.add_css_class("filter-join");
+    filter_header.append(&filter_title);
+    filter_header.append(&filter_join);
+    filter_header.append(&add_filter);
+    let filter_panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    filter_panel.add_css_class("filter-panel");
+    filter_panel.append(&filter_header);
+    filter_panel.append(&filter_list);
+    filter_panel.append(&controls);
 
     let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     toolbar.add_css_class("view-toolbar");
@@ -138,8 +160,6 @@ pub fn build(
     let toolbar_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     toolbar_spacer.set_hexpand(true);
     toolbar.append(&toolbar_spacer);
-    toolbar.append(&order_box);
-    toolbar.append(&filter_button);
     toolbar.append(&copy_button);
     toolbar.append(&export_button);
     toolbar.append(&refresh_button);
@@ -167,6 +187,7 @@ pub fn build(
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.append(&toolbar);
+    root.append(&filter_panel);
     root.append(&status_row);
     root.append(&grid.root);
     root.append(&pagination);
@@ -188,7 +209,9 @@ pub fn build(
         previous_button: previous_button.clone(),
         next_button: next_button.clone(),
         refresh_button: refresh_button.clone(),
-        filter_popover: filter_popover.clone(),
+        copy_button: copy_button.clone(),
+        export_button: export_button.clone(),
+        limit_input: limit_input.clone(),
         filter_list: filter_list.clone(),
         order_dropdown: order_dropdown.clone(),
         order_descending: order_descending.clone(),
@@ -244,11 +267,6 @@ pub fn build(
             update_order(state.clone(), ui.clone(), engine.clone());
         });
     }
-    // Filter popover
-    {
-        let popover = filter_popover.clone();
-        filter_button.connect_clicked(move |_| popover.popup());
-    }
     {
         let state = state.clone();
         add_filter.connect_clicked(move |_| {
@@ -300,8 +318,8 @@ pub fn build(
                 let mut state = state.borrow_mut();
                 state.filters = filters;
                 state.page_index = 0;
+                state.limit = state.limit_input.value() as u32;
             }
-            state.borrow().filter_popover.popdown();
             load(state.clone(), ui.clone(), engine.clone());
         });
     }
@@ -317,7 +335,6 @@ pub fn build(
                 state.page_index = 0;
             }
             rebuild_filter_rows(&state);
-            state.borrow().filter_popover.popdown();
             load(state.clone(), ui.clone(), engine.clone());
         });
     }
@@ -541,11 +558,17 @@ fn load(state: Rc<RefCell<TableViewState>>, ui: Rc<RefCell<Ui>>, engine: Arc<App
 }
 
 fn apply_page(state: &mut TableViewState, this: &Rc<RefCell<TableViewState>>, page: TablePage) {
-    let columns: Vec<(String, i32)> = page
+    let columns: Vec<(String, String, i32)> = page
         .metadata
         .columns
         .iter()
-        .map(|column| (column.name.clone(), default_column_width(&column.data_type)))
+        .map(|column| {
+            (
+                column.name.clone(),
+                column.data_type.clone(),
+                default_column_width(&column.data_type),
+            )
+        })
         .collect();
     state.columns = page
         .metadata
@@ -594,8 +617,16 @@ fn apply_page(state: &mut TableViewState, this: &Rc<RefCell<TableViewState>>, pa
         || format!("{} rows on this page", page.rows.len()),
         |total| format!("{total} rows"),
     );
+    let shown = page.rows.len();
+    state
+        .copy_button
+        .set_label(&format!("Copy visible ({shown})"));
+    state
+        .export_button
+        .set_label(&format!("Export all ({shown})"));
     state.status.set_label(&format!(
-        "{total} · showing rows {}–{}",
+        "{total} · {} columns · showing rows {}–{}",
+        page.metadata.columns.len(),
         if page.rows.is_empty() {
             0
         } else {

@@ -47,13 +47,14 @@ impl DataGrid {
         Self { root, view, store }
     }
 
-    /// Rebuilds the columns. Widths mirror the React table's defaults.
-    pub fn set_columns(&self, columns: &[(String, i32)]) {
+    /// Rebuilds the columns. Titles carry the data type on a second line, and
+    /// widths mirror the React table's defaults.
+    pub fn set_columns(&self, columns: &[(String, String, i32)]) {
         while let Some(column) = self.view.columns().item(0) {
             self.view
                 .remove_column(&column.downcast::<gtk::ColumnViewColumn>().unwrap());
         }
-        for (index, (name, width)) in columns.iter().enumerate() {
+        for (index, (name, data_type, width)) in columns.iter().enumerate() {
             let factory = gtk::SignalListItemFactory::new();
             factory.connect_setup(|_, item| {
                 let label = gtk::Label::new(None);
@@ -82,7 +83,12 @@ impl DataGrid {
                     }
                 }
             });
-            let column = gtk::ColumnViewColumn::new(Some(name), Some(factory));
+            let title = if data_type.is_empty() {
+                name.clone()
+            } else {
+                format!("{name}\n{data_type}")
+            };
+            let column = gtk::ColumnViewColumn::new(Some(&title), Some(factory));
             column.set_fixed_width(*width);
             column.set_resizable(true);
             column.set_expand(false);

@@ -108,6 +108,19 @@ Platform notes:
   editor so statement targeting follows the caret or selection like the other
   frontends.
 
+## Typography and design
+
+The React UI and all three native frontends use Satoshi for interface text and
+the platform monospace face for editors and grids, matching the Tauri app's
+tokens (10px/700 headers with an 8px muted type line, `#172332` header fill,
+`rgba(56, 189, 248, 0.045)` row hover, 90ms colour transitions, a 7px grid
+radius, and the inline filter panel). Satoshi is fetched with `npm run fonts`
+into the git-ignored `assets/fonts` because its license permits embedding but
+not repository distribution; each frontend embeds it at build time and falls
+back to the system font when it is absent. On Windows the font is registered
+through a private DirectWrite collection, and on macOS the app bundle registers
+it with `ATSApplicationFontsPath`.
+
 ## Known gaps versus the Tauri app
 
 - Staged inline edits and deletes are not built yet on any native frontend. The
@@ -116,7 +129,9 @@ Platform notes:
   `SELECT * FROM table` statement opens the full table view on every native
   frontend, matching the Tauri workbench, but that view is still read-only.
 - Structured table filters exist on Linux only; Windows and macOS do ordering,
-  paging, and CSV export.
+  paging, and CSV export. The Linux table now matches the React chrome (typed
+  headers, inline filter panel, hover and selection states, copy/export counts);
+  Windows and macOS still use their earlier, plainer table rendering.
 - Query tabs cannot be renamed or collapsed; table columns cannot be collapsed
   or resized.
 - Query history in one tab does not push a live update into other open tabs.

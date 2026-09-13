@@ -16,10 +16,17 @@ Prerequisites:
 
 ```sh
 npm install
+npm run fonts          # fetches Satoshi, the UI typeface (see below)
 cargo test --workspace
 npm run check
 npm run dev
 ```
+
+DBM's interface uses [Satoshi](https://www.fontshare.com/fonts/satoshi) under
+the ITF Free Font License. That license allows embedding the font in the app
+but not redistributing it through a repository, so `npm run fonts` downloads it
+into the git-ignored `assets/fonts` and every frontend embeds it at build time.
+Without it the apps fall back to the system font.
 
 The Rust workspace has two library crates and the Tauri shell:
 `crates/dbm-engine` (toolkit-independent database engines and local storage),

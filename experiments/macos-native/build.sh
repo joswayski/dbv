@@ -70,5 +70,15 @@ swiftc -parse-as-library -O \
   DBMNative/*.swift
 cp Info.plist "$app/Contents/Info.plist"
 
+# Satoshi is fetched with `npm run fonts`; its license allows embedding it in
+# the app but not committing it, so it is copied when present.
+font="../../assets/fonts/Satoshi-Variable.ttf"
+if [[ -f "$font" ]]; then
+  cp "$font" "$app/Contents/Resources/Satoshi-Variable.ttf"
+  echo "    Embedded Satoshi"
+else
+  echo "    Satoshi missing; run 'npm run fonts' for the bundled typeface"
+fi
+
 echo "==> Built $app"
 echo "    Run it with: open \"$app\""

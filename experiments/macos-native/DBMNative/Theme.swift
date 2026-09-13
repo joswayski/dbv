@@ -25,12 +25,17 @@ enum Theme {
     static let warning = Color(hex: "#fbbf24")
     static let inkOnAccent = Color(hex: "#03121d")
 
+    /// The embedded UI family; AppKit registers it from the bundle's
+    /// Resources (see ATSApplicationFontsPath) and falls back to the system
+    /// font when `npm run fonts` has not been run.
+    private static let uiFamily = "Satoshi Variable"
+
     static let monoFont = Font.system(size: 12.5, design: .monospaced)
     static let monoNSFont = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
-    static let uiFont = Font.system(size: 12.5)
-    static let smallFont = Font.system(size: 11)
-    static let eyebrowFont = Font.system(size: 9, weight: .heavy)
-    static let titleFont = Font.system(size: 15, weight: .semibold)
+    static let uiFont = Font.custom(uiFamily, size: 12.5)
+    static let smallFont = Font.custom(uiFamily, size: 11)
+    static let eyebrowFont = Font.custom(uiFamily, size: 9).weight(.heavy)
+    static let titleFont = Font.custom(uiFamily, size: 15).weight(.semibold)
 }
 
 extension Color {

@@ -33,6 +33,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_MOUSEWHEEL, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 
+mod satoshi {
+    include!(concat!(env!("OUT_DIR"), "/satoshi.rs"));
+}
+
 const TIMER_ID: usize = 1;
 
 struct App {

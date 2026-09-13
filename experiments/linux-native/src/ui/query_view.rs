@@ -382,10 +382,16 @@ fn execute(
 }
 
 fn apply_response(state: &mut QueryState, response: &QueryResponse) {
-    let columns: Vec<(String, i32)> = response
+    let columns: Vec<(String, String, i32)> = response
         .columns
         .iter()
-        .map(|column| (column.name.clone(), default_column_width(&column.data_type)))
+        .map(|column| {
+            (
+                column.name.clone(),
+                column.data_type.clone(),
+                default_column_width(&column.data_type),
+            )
+        })
         .collect();
     state.grid.set_columns(&columns);
     state.grid.set_rows(&response.rows);

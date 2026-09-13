@@ -19,6 +19,8 @@ use gtk4::prelude::*;
 const APP_ID: &str = "io.github.joswayski.dbm.native";
 
 fn main() -> glib::ExitCode {
+    // Registers the embedded font with fontconfig before GTK starts.
+    theme::install_font();
     let app = gtk::Application::builder().application_id(APP_ID).build();
     app.connect_startup(|_| theme::install());
     app.connect_activate(|app| {

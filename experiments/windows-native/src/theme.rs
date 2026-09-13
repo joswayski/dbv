@@ -28,6 +28,10 @@ pub const FONT_SIZE_SMALL: f32 = 11.0;
 pub const FONT_SIZE_EYEBROW: f32 = 9.0;
 pub const FONT_SIZE_TITLE: f32 = 15.0;
 
+/// The embedded UI family, or the system fallback when the font was not
+/// fetched with `npm run fonts`.
+pub const SATOSHI_FAMILY: &str = "Satoshi Variable";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Font {
     Ui,
@@ -51,7 +55,7 @@ impl Font {
     pub fn family(self) -> &'static str {
         match self {
             Self::Mono => "Consolas",
-            _ => "Segoe UI",
+            _ => SATOSHI_FAMILY,
         }
     }
 

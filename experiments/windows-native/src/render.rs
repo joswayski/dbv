@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use windows::core::{Result, HSTRING};
+use windows::core::{Interface, Result, HSTRING};
 use windows::Foundation::Numerics::Matrix3x2;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -17,11 +17,11 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::DirectWrite::{
-    DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, IDWriteTextLayout,
-    DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-    DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-    DWRITE_PARAGRAPH_ALIGNMENT_NEAR, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
-    DWRITE_WORD_WRAPPING_NO_WRAP,
+    DWriteCreateFactory, IDWriteFactory, IDWriteFontCollection, IDWriteTextFormat,
+    IDWriteTextLayout, DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL,
+    DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL,
+    DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
+    DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_WORD_WRAPPING_NO_WRAP,
 };
 
 use crate::theme::{self, Font};
@@ -37,6 +37,8 @@ pub enum TextAlign {
 pub struct Renderer {
     factory: ID2D1Factory,
     dwrite: IDWriteFactory,
+    /// A collection holding the embedded Satoshi font, when it is available.
+    fonts: Option<IDWriteFontCollection>,
     target: Option<ID2D1HwndRenderTarget>,
     hwnd: HWND,
     dpi: f32,
@@ -57,9 +59,11 @@ impl Renderer {
             )?
         };
         let dwrite: IDWriteFactory = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
+        let fonts = load_satoshi(&dwrite);
         Ok(Self {
             factory,
             dwrite,
+            fonts,
             target: None,
             hwnd,
             dpi: 1.0,
@@ -166,21 +170,38 @@ impl Renderer {
         if let Some(format) = self.formats.get(&key) {
             return Ok(format.clone());
         }
-        let format = match unsafe {
+        let weight = if font.bold() {
+            DWRITE_FONT_WEIGHT_BOLD
+        } else {
+            DWRITE_FONT_WEIGHT_NORMAL
+        };
+        let mut format = unsafe {
             self.dwrite.CreateTextFormat(
                 &HSTRING::from(font.family()),
-                None,
-                if font.bold() {
-                    DWRITE_FONT_WEIGHT_BOLD
-                } else {
-                    DWRITE_FONT_WEIGHT_NORMAL
-                },
+                self.fonts.as_ref(),
+                weight,
                 DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
                 font.size(),
                 &HSTRING::from("en-us"),
             )
-        } {
+        };
+        if format.is_err() && self.fonts.is_some() {
+            // Wine's DirectWrite has no in-memory font loader; fall back to the
+            // system collection rather than failing to draw text.
+            format = unsafe {
+                self.dwrite.CreateTextFormat(
+                    &HSTRING::from(font.family()),
+                    None,
+                    weight,
+                    DWRITE_FONT_STYLE_NORMAL,
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    font.size(),
+                    &HSTRING::from("en-us"),
+                )
+            };
+        }
+        let format = match format {
             Ok(format) => format,
             Err(error) => {
                 eprintln!("CreateTextFormat failed: {error}");
@@ -435,6 +456,35 @@ impl Renderer {
     /// Line height for the editor and list rows.
     pub fn line_height(&mut self, font: Font) -> f32 {
         font.size() * 1.5
+    }
+}
+
+/// Registers the embedded Satoshi font with a private DirectWrite collection.
+///
+/// The ITF Free Font License allows embedding the font in applications, so the
+/// bytes are compiled in by `build.rs`; without them DirectWrite falls back to
+/// the system family.
+fn load_satoshi(dwrite: &IDWriteFactory) -> Option<IDWriteFontCollection> {
+    use windows::Win32::Graphics::DirectWrite::IDWriteFactory5;
+
+    let bytes = crate::satoshi::SATOSHI?;
+    unsafe {
+        let factory: IDWriteFactory5 = dwrite.cast().ok()?;
+        let loader = factory.CreateInMemoryFontFileLoader().ok()?;
+        factory.RegisterFontFileLoader(&loader).ok()?;
+        let file = loader
+            .CreateInMemoryFontFileReference(
+                dwrite,
+                bytes.as_ptr().cast(),
+                bytes.len() as u32,
+                None,
+            )
+            .ok()?;
+        let builder = factory.CreateFontSetBuilder().ok()?;
+        builder.AddFontFile(&file).ok()?;
+        let set = builder.CreateFontSet().ok()?;
+        let collection = factory.CreateFontCollectionFromFontSet(&set).ok()?;
+        collection.cast().ok()
     }
 }
 

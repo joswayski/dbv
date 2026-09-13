@@ -149,6 +149,9 @@ persist_toolchain_path() {
 
 install_node_dependencies() {
   npm ci --no-audit --no-fund
+  # Satoshi, the UI typeface. Its license allows embedding but not committing,
+  # so it is fetched into the git-ignored assets/fonts for local builds.
+  node scripts/fetch-fonts.mjs || true
 }
 
 fetch_rust_dependencies() {

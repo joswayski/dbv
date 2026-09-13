@@ -12,3 +12,5 @@
 **/gen/schemas/
 .amp/portals/
 .amp/in/
+# Satoshi is fetched with `npm run fonts`; its license forbids committing it.
+assets/fonts/
