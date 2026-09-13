@@ -137,14 +137,17 @@ runs, same saved PostgreSQL profile). The Tauri column is the app from `main`,
 built from a pristine worktree; the branch build measured the same within
 run-to-run noise, and its React bundle is byte-identical.
 
+With WebKit's DMA-BUF renderer disabled so both sides render in software (see
+below), which is the fair comparison on a GPU-less display:
+
 | Metric | Tauri + WebKitGTK (main) | GTK4 native | Difference |
 | --- | --- | --- | --- |
 | Binary size | 30.9 MB | 11.8 MB | 2.6x smaller |
-| Window mapped | 0.31 s | 0.30 s | same |
-| First painted frame | 1.55 s | 0.83 s | 1.9x faster |
-| Idle PSS / RSS | 304 MB / 492 MB | 126 MB / 166 MB | 2.4x / 3.0x less |
-| After connect + query (PSS / RSS) | 355 MB / 548 MB | 159 MB / 202 MB | 2.2x / 2.7x less |
-| Idle CPU | 0.25% | 0.00% | |
+| Window mapped | 0.28 s | 0.30 s | same |
+| First painted frame | 1.29 s | 0.83 s | 1.6x faster |
+| Idle PSS / RSS | 217 MB / 396 MB | 126 MB / 166 MB | 1.7x / 2.4x less |
+| After connect + query (PSS / RSS) | 247 MB / 431 MB | 159 MB / 202 MB | 1.6x / 2.1x less |
+| CPU after a query | 1.25% | 0.00% | |
 
 On Linux, Tauri renders the React UI in WebKitGTK (GTK3 + WebKit2GTK); on macOS
 that webview is WKWebView and on Windows it is WebView2, so only the Linux
@@ -152,11 +155,14 @@ comparison has been measured here.
 
 Two caveats matter when reading this:
 
-- Xvfb has no GPU, and WebKit's compositor busy-waits there: the Tauri web
-  process held ~61% of a core after a query result rendered, and dropped to
-  1.2% with `WEBKIT_DISABLE_COMPOSITING_MODE=1`. That is an artifact of
-  software rendering, not a claim about Tauri on a real desktop. The native
-  frontend's post-query CPU settles back to 0%.
+- Without `WEBKIT_DISABLE_DMABUF_RENDERER=1`, WebKit picks its DMA-BUF
+  renderer, which has no real GPU buffers to import under Xvfb. The compositor
+  then busy-waits at ~61% of a core after a query result first promotes
+  content to a composited layer, and holds ~110 MB more in graphics buffers
+  (idle PSS 304 MB, load 355 MB). `WEBKIT_DISABLE_COMPOSITING_MODE=1` has the
+  same effect. That is software-rendering behavior, not a claim about Tauri on
+  a GPU desktop, but it does mean the webview has a rendering path the native
+  frontends simply do not have.
 - Database work is engine-bound and identical by construction, so these numbers
   are about the presentation layer only. macOS and Windows have not been
   measured.
