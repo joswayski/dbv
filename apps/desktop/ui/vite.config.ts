@@ -4,6 +4,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   root: "ui",
   plugins: [react()],
+  // Satoshi is fetched into assets/fonts (see scripts/fetch-fonts.mjs) and
+  // served as /fonts/…; the ITF license keeps it out of the repository.
+  publicDir: "../../../assets",
   server: {
     host: "127.0.0.1",
     port: 1421,

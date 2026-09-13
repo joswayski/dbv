@@ -16,9 +16,38 @@ Prerequisites:
 
 ```sh
 npm install
+npm run fonts          # fetches Satoshi, the UI typeface (see below)
 cargo test --workspace
 npm run check
 npm run dev
+```
+
+DBM's interface uses [Satoshi](https://www.fontshare.com/fonts/satoshi) under
+the ITF Free Font License. That license allows embedding the font in the app
+but not redistributing it through a repository, so `npm run fonts` downloads it
+into the git-ignored `assets/fonts` and every frontend embeds it at build time.
+Without it the apps fall back to the system font.
+
+The Rust workspace has two library crates and the Tauri shell:
+`crates/dbm-engine` (toolkit-independent database engines and local storage),
+`crates/dbm-workbench` (shared presentation logic such as URL import, CSV, and
+statement targeting), and `apps/desktop/src-tauri`. Neither library depends on a
+presentation framework, so the frontend experiments described below link them
+directly. See [docs/native-platforms.md](docs/native-platforms.md) for that work.
+
+The platform-native frontends are separate Cargo workspaces so the root checks
+stay toolkit-free on every platform:
+
+```sh
+cd experiments/linux-native     # GTK4; needs libgtk-4-dev and a display server
+cargo test && cargo run
+
+cd experiments/windows-native   # Win32 + Direct2D; builds on Windows or via mingw
+cargo check --target x86_64-pc-windows-msvc
+
+cd experiments/macos-native     # SwiftUI + Rust bridge; the bridge builds anywhere
+cargo test --manifest-path bridge/Cargo.toml
+./build.sh check                # typechecks the Swift sources on macOS
 ```
 
 ### Amp orbs
@@ -119,6 +148,42 @@ Passwords are stored in the operating system credential store when available.
 
 The browser preview used by Vite has a small in-memory mock so the layout can be
 worked on without launching Tauri. The real desktop app uses the Rust commands.
+
+## Platform-native frontends
+
+The native frontends are the direction of record for the next release: they
+replace only the presentation layer with platform-native, custom-rendered UIs
+that link the shared engines directly, without a webview. The Tauri app above
+stays the fallback until they reach parity and gain installers.
+
+- **Linux:** a GTK4 frontend under `experiments/linux-native` covers saved
+  connections and the connection editor, schema/keyspace browsing, query tabs
+  with history and results, paginated table browsing with filters, ordering, and
+  CSV export, and Redis command tabs. It has been run against live PostgreSQL
+  and Redis.
+- **Windows:** a Win32 + Direct2D/DirectWrite frontend under
+  `experiments/windows-native` covers the same workbench with a custom-painted
+  text editor. It builds and tests on Windows CI and has been exercised under
+  Wine against live databases; it has not been run on Windows by hand yet.
+- **macOS:** a SwiftUI/AppKit app under `experiments/macos-native` with a tested
+  Rust bridge. The earlier slice built on macOS CI; the new staged-edit Swift
+  changes still need macOS compilation and hands-on verification.
+
+All three now implement local staged cell edits and selected-row deletions,
+amber/red pending states, before/after previews, and Save/Discard through the
+shared mutation engine. Primary keys stay locked and read-only/PK-less tables
+cannot be edited. Linux has been exercised against PostgreSQL for Save, undo,
+failed writes, and row conflicts; Windows and macOS still need native runtime
+verification of the new editing workflow.
+
+What is still missing before the native frontends can replace the Tauri app:
+structured filters on Windows and macOS, tab rename/collapse, complete
+visual/animation parity, and installer, signing, and
+updater integration. The current visual pass brings profile-tinted tabs,
+typed full-width grids, and dark panel treatments closer to Tauri; Linux has
+rendered regression coverage, while macOS still needs on-device visual review.
+Status, gaps, benchmarks, and verification rules live in
+[docs/native-platforms.md](docs/native-platforms.md).
 
 ## Deliberate follow-ups
 

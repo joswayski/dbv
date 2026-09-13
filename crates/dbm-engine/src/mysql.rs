@@ -13,6 +13,8 @@ use mysql_async::{
 };
 use serde_json::Value as JsonValue;
 
+use crate::util::hex_encode;
+
 const MAX_PAGE_SIZE: u32 = 1_000;
 const DEFAULT_QUERY_ROWS: u32 = 10_000;
 const SYSTEM_SCHEMAS: &[&str] = &["information_schema", "mysql", "performance_schema", "sys"];
@@ -676,10 +678,6 @@ fn mysql_type_name(column_type: ColumnType) -> String {
         ColumnType::MYSQL_TYPE_GEOMETRY => "geometry".into(),
         other => format!("{other:?}"),
     }
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]

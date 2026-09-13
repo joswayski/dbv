@@ -8,7 +8,12 @@ use crate::models::{
 };
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use serde_json::Value;
+use std::error::Error;
+use tokio_postgres::types::FromSql;
 use tokio_postgres::{Client, Config, NoTls, Row, types::Type};
+use uuid::Uuid;
+
+use crate::util::hex_encode;
 
 const MAX_PAGE_SIZE: u32 = 1_000;
 const DEFAULT_QUERY_ROWS: u32 = 10_000;
@@ -661,6 +666,27 @@ fn value_from_row(row: &Row, index: usize) -> Value {
             .map(Value::Number)
             .unwrap_or(Value::Null);
     }
+    if *ty == Type::NUMERIC {
+        // `numeric` has no decoder in the tokio-postgres feature set this
+        // workspace resolves, so DBM reads the binary format itself. Keeping
+        // the declared scale matters: 7.00 must not render as 7.
+        return row
+            .try_get::<_, PgNumeric>(index)
+            .map(|value| Value::String(value.as_str().to_owned()))
+            .unwrap_or(Value::Null);
+    }
+    if *ty == Type::UUID {
+        return row
+            .try_get::<_, Uuid>(index)
+            .map(|value| Value::String(value.to_string()))
+            .unwrap_or(Value::Null);
+    }
+    if *ty == Type::BYTEA {
+        return row
+            .try_get::<_, Vec<u8>>(index)
+            .map(|bytes| Value::String(format!("\\x{}", hex_encode(&bytes))))
+            .unwrap_or(Value::Null);
+    }
     if [Type::JSON, Type::JSONB].contains(ty) {
         return row.try_get::<_, Value>(index).unwrap_or(Value::Null);
     }
@@ -693,6 +719,84 @@ fn value_from_row(row: &Row, index: usize) -> Value {
         .flatten()
         .map(Value::String)
         .unwrap_or(Value::Null)
+}
+
+/// A PostgreSQL `numeric`/`decimal` value.
+///
+/// tokio-postgres has no numeric decoder in the feature set this workspace
+/// resolves, so DBM reads the documented binary format and renders the value
+/// as text with the column's declared scale (`7.00`, not `7`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PgNumeric(String);
+
+impl PgNumeric {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromSql<'_> for PgNumeric {
+    fn from_sql(_ty: &Type, raw: &[u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
+        decode_numeric(raw)
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        matches!(*ty, Type::NUMERIC)
+    }
+}
+
+fn decode_numeric(raw: &[u8]) -> Result<PgNumeric, Box<dyn Error + Sync + Send>> {
+    if raw.len() < 8 {
+        return Err("numeric value is shorter than its header".into());
+    }
+    let ndigits = i16::from_be_bytes([raw[0], raw[1]]);
+    let weight = i16::from_be_bytes([raw[2], raw[3]]);
+    let sign = u16::from_be_bytes([raw[4], raw[5]]);
+    let scale = usize::from(u16::from_be_bytes([raw[6], raw[7]]));
+    match sign {
+        0xC000 => return Ok(PgNumeric("NaN".into())),
+        0xD000 => return Ok(PgNumeric("Infinity".into())),
+        0xF000 => return Ok(PgNumeric("-Infinity".into())),
+        _ => {}
+    }
+    if ndigits < 0 || raw.len() < 8 + usize::from(ndigits as u16) * 2 {
+        return Err("numeric value is shorter than its digits".into());
+    }
+    let digits: Vec<u16> = (0..ndigits as usize)
+        .map(|index| u16::from_be_bytes([raw[8 + index * 2], raw[9 + index * 2]]))
+        .collect();
+
+    let mut rendered = String::new();
+    if sign == 0x4000 {
+        rendered.push('-');
+    }
+    // Digits are base 10000, and `weight` is the index of the group just left
+    // of the decimal point, so the integer part is `digits[0..=weight]`.
+    if weight < 0 {
+        rendered.push('0');
+    } else {
+        for index in 0..=weight as usize {
+            let digit = digits.get(index).copied().unwrap_or(0);
+            if index == 0 {
+                rendered.push_str(&digit.to_string());
+            } else {
+                rendered.push_str(&format!("{digit:04}"));
+            }
+        }
+    }
+    if scale > 0 {
+        let mut fraction = String::new();
+        for digit in digits.iter().skip((weight + 1).max(0) as usize) {
+            fraction.push_str(&format!("{digit:04}"));
+        }
+        while fraction.len() < scale {
+            fraction.push('0');
+        }
+        fraction.truncate(scale);
+        rendered.push('.');
+        rendered.push_str(&fraction);
+    }
+    Ok(PgNumeric(rendered))
 }
 
 #[cfg(test)]
@@ -821,5 +925,40 @@ mod tests {
             "ALTER TABLE users ADD COLUMN note text"
         ));
         assert!(!is_mutating_statement("SELECT * FROM users"));
+    }
+
+    fn numeric_bytes(ndigits: i16, weight: i16, sign: u16, scale: u16, digits: &[u16]) -> Vec<u8> {
+        let mut raw = Vec::new();
+        raw.extend_from_slice(&ndigits.to_be_bytes());
+        raw.extend_from_slice(&weight.to_be_bytes());
+        raw.extend_from_slice(&sign.to_be_bytes());
+        raw.extend_from_slice(&scale.to_be_bytes());
+        for digit in digits {
+            raw.extend_from_slice(&digit.to_be_bytes());
+        }
+        raw
+    }
+
+    #[test]
+    fn numeric_values_keep_their_declared_scale() {
+        let cases = [
+            (numeric_bytes(1, 0, 0, 2, &[7]), "7.00"),
+            (numeric_bytes(1, -1, 0x4000, 2, &[500]), "-0.05"),
+            (numeric_bytes(3, 1, 0, 3, &[1, 2345, 6780]), "12345.678"),
+            (numeric_bytes(0, 0, 0, 0, &[]), "0"),
+            (numeric_bytes(0, 0, 0, 2, &[]), "0.00"),
+            (numeric_bytes(1, 4, 0, 0, &[10]), "100000000000000000"),
+            (numeric_bytes(3, 1, 0, 1, &[10, 0, 5000]), "100000.5"),
+            (numeric_bytes(0, 0, 0xC000, 0, &[]), "NaN"),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(decode_numeric(&raw).expect("numeric").as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn truncated_numeric_values_are_rejected() {
+        assert!(decode_numeric(&[0, 1]).is_err());
+        assert!(decode_numeric(&numeric_bytes(2, 0, 0, 0, &[1])).is_err());
     }
 }

@@ -9,6 +9,7 @@
     "dev": "npm run tauri:dev --workspace @dbm/desktop",
     "build": "node scripts/build.mjs",
     "build:ui": "npm run build --workspace @dbm/desktop",
+    "fonts": "node scripts/fetch-fonts.mjs",
     "check": "npm run check --workspace @dbm/desktop",
     "test": "npm run test --workspace @dbm/desktop",
     "tauri:dev": "npm run tauri:dev --workspace @dbm/desktop",

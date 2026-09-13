@@ -40,12 +40,14 @@ timed() {
 }
 
 install_system_packages() {
-  # The Tauri Linux dependencies from .github/workflows/ci.yml. build-essential,
-  # libssl-dev, librsvg2-dev, and pkg-config are already in the orb image but
-  # stay listed so this also works on a bare Debian machine.
+  # The Tauri Linux dependencies from .github/workflows/ci.yml plus GTK 4 for
+  # the experiments/linux-native frontend. build-essential, libssl-dev,
+  # librsvg2-dev, and pkg-config are already in the orb image but stay listed so
+  # this also works on a bare Debian machine.
   local packages=(
     build-essential
     libayatana-appindicator3-dev
+    libgtk-4-dev
     libssl-dev
     libwebkit2gtk-4.1-dev
     libxdo-dev
@@ -147,6 +149,9 @@ persist_toolchain_path() {
 
 install_node_dependencies() {
   npm ci --no-audit --no-fund
+  # Satoshi, the UI typeface. Its license allows embedding but not committing,
+  # so it is fetched into the git-ignored assets/fonts for local builds.
+  node scripts/fetch-fonts.mjs || true
 }
 
 fetch_rust_dependencies() {

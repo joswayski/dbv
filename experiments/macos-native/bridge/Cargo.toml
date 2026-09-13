@@ -1,0 +1,22 @@
+[workspace]
+
+[package]
+name = "dbm-native-macos-bridge"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "Rust bridge for the macOS SwiftUI DBM frontend (in development)"
+
+[lib]
+name = "dbm_native_bridge"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+dbm-engine = { path = "../../../crates/dbm-engine" }
+dbm-workbench = { path = "../../../crates/dbm-workbench" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+uuid = { version = "1", features = ["v4"] }

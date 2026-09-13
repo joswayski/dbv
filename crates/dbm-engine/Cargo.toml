@@ -1,0 +1,27 @@
+[package]
+name = "dbm-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+chrono.workspace = true
+directories.workspace = true
+keyring.workspace = true
+mysql_async.workspace = true
+native-tls.workspace = true
+postgres-native-tls.workspace = true
+redis_rs.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
