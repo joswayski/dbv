@@ -7,10 +7,11 @@ pub mod widgets;
 use std::collections::{HashMap, HashSet};
 
 use dbm_engine::models::{
-    ConnectionProfile, DatabaseEngine, DatabaseRef, FilterCondition, OrderSpec, QueryHistoryEntry,
-    QueryResponse, SaveProfileInput, SchemaNode, TablePage,
+    ConnectionProfile, DatabaseEngine, DatabaseRef, FilterCondition, MutationBatch, OrderSpec,
+    QueryHistoryEntry, QueryResponse, RowMutation, SaveProfileInput, SchemaNode, TablePage,
 };
 use dbm_workbench::format;
+use dbm_workbench::pending_edits::{row_key, PendingEdits};
 use uuid::Uuid;
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 
@@ -30,6 +31,7 @@ pub enum FieldId {
     Password,
     CaPath,
     Query(u64),
+    TableCell(u64, usize, usize),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -72,6 +74,18 @@ pub enum Action {
         column: String,
     },
     RefreshTable(u64),
+    TableCell {
+        tab: u64,
+        row: usize,
+        column: usize,
+    },
+    StageDelete(u64),
+    SaveTable(u64),
+    DiscardTable(u64),
+    DiscardTableRow {
+        tab: u64,
+        row: usize,
+    },
     ToggleMenu(Uuid),
     ToggleDatabases(Uuid),
     SelectDatabase(Uuid, String),
@@ -136,7 +150,13 @@ pub struct TableState {
     pub filters: Vec<FilterCondition>,
     pub columns: Vec<(String, String)>,
     pub loading: bool,
+    pub saving: bool,
+    pub saving_mutations: Option<Vec<RowMutation>>,
     pub status: String,
+    pub pending: PendingEdits,
+    pub selected_rows: HashSet<String>,
+    pub selection_anchor: Option<usize>,
+    pub preview_row: Option<String>,
 }
 
 pub struct QueryState {
@@ -242,6 +262,8 @@ pub struct Ui {
     pressed: Option<Action>,
     focus: Option<FieldId>,
     next_tab_id: u64,
+    input_control: bool,
+    input_shift: bool,
     pub time: f32,
 }
 
@@ -278,6 +300,8 @@ impl Ui {
             pressed: None,
             focus: None,
             next_tab_id: 1,
+            input_control: false,
+            input_shift: false,
             time: 0.0,
         };
         ui.load_profiles();
@@ -430,6 +454,9 @@ impl Ui {
         let Some(state) = self.tables.get_mut(&tab) else {
             return;
         };
+        if state.loading || state.saving {
+            return;
+        }
         state.loading = true;
         state.status = "Loading…".to_owned();
         let request = dbm_engine::models::TablePageRequest {
@@ -449,6 +476,35 @@ impl Ui {
                 session.table_page(&request).await
             },
             move |result| EngineEvent::TablePage {
+                tab,
+                result: result.map_err(|error| bridge::error_text(&error)),
+            },
+        );
+    }
+
+    fn save_table(&mut self, tab: u64) {
+        let Some(state) = self.tables.get_mut(&tab) else {
+            return;
+        };
+        if state.pending.is_empty() || state.loading || state.saving {
+            return;
+        }
+        state.saving = true;
+        let mutations = state.pending.mutations();
+        state.saving_mutations = Some(mutations.clone());
+        let batch = MutationBatch {
+            profile_id: state.profile_id,
+            schema: state.schema.clone(),
+            table: state.table.clone(),
+            mutations,
+        };
+        let engine = bridge::engine().clone();
+        bridge::spawn(
+            async move {
+                let session = engine.session(batch.profile_id).await?;
+                session.apply_mutations(&batch).await
+            },
+            move |result| EngineEvent::TableMutations {
                 tab,
                 result: result.map_err(|error| bridge::error_text(&error)),
             },
@@ -562,15 +618,18 @@ impl Ui {
                     if offset == 0 {
                         document.push_str(&format::csv_line(
                             &page
+                                .metadata
                                 .columns
                                 .iter()
-                                .map(|name| serde_json::Value::String(name.clone()))
+                                .map(|column| serde_json::Value::String(column.name.clone()))
                                 .collect::<Vec<_>>(),
                         ));
                     }
                     for row in &page.rows {
                         document.push('\n');
-                        document.push_str(&format::csv_line(row));
+                        document.push_str(&format::csv_line(
+                            &row[..row.len().min(page.metadata.columns.len())],
+                        ));
                     }
                     rows_written += page.rows.len() as u64;
                     if !page.has_more {
@@ -652,12 +711,59 @@ impl Ui {
                                 page.offset + page.rows.len() as u32
                             );
                             state.page = Some(page);
+                            state.selected_rows.clear();
+                            state.selection_anchor = None;
+                            state.preview_row = None;
                         }
                         Err(error) => {
                             state.status = "Load failed.".to_owned();
                             self.error = Some((error, self.time));
                         }
                     }
+                }
+            }
+            EngineEvent::TableMutations { tab, result } => {
+                let mut reload = false;
+                if let Some(state) = self.tables.get_mut(&tab) {
+                    state.saving = false;
+                    let submitted = state.saving_mutations.take();
+                    match result {
+                        Ok(result) => {
+                            let drafts_unchanged = submitted.as_ref().is_some_and(|submitted| {
+                                mutations_equal(submitted, &state.pending.mutations())
+                            });
+                            if drafts_unchanged {
+                                state.pending.clear();
+                                state.selected_rows.clear();
+                                state.selection_anchor = None;
+                                state.preview_row = None;
+                            }
+                            reload = true;
+                            if result.conflicts.is_empty() {
+                                self.show_toast(&format!(
+                                    "{} {} saved.",
+                                    result.applied,
+                                    if result.applied == 1 {
+                                        "change"
+                                    } else {
+                                        "changes"
+                                    }
+                                ));
+                            } else {
+                                self.error = Some((
+                                    format!(
+                                        "{} row conflict(s); the table was refreshed.",
+                                        result.conflicts.len()
+                                    ),
+                                    self.time,
+                                ));
+                            }
+                        }
+                        Err(error) => self.error = Some((error, self.time)),
+                    }
+                }
+                if reload {
+                    self.load_table_page(tab);
                 }
             }
             EngineEvent::Query { tab, sql, result } => {
@@ -740,7 +846,13 @@ impl Ui {
                 filters: Vec::new(),
                 columns: Vec::new(),
                 loading: false,
+                saving: false,
+                saving_mutations: None,
                 status: "Loading…".to_owned(),
+                pending: PendingEdits::default(),
+                selected_rows: HashSet::new(),
+                selection_anchor: None,
+                preview_row: None,
             },
         );
         self.tabs.push(Tab {
@@ -885,6 +997,17 @@ impl Ui {
         self.field_rects.insert(field, rect);
     }
 
+    pub fn remove_field_hit_region(&mut self, field: FieldId) {
+        if self
+            .regions
+            .last()
+            .is_some_and(|region| region.action == Action::ClickField { field })
+        {
+            self.regions.pop();
+        }
+        self.field_rects.remove(&field);
+    }
+
     pub fn hovered(&self, action: &Action) -> bool {
         self.hover.as_ref() == Some(action)
     }
@@ -903,6 +1026,166 @@ impl Ui {
 
     pub fn set_scroll(&mut self, view: ViewId, offset: f32) {
         self.scroll.insert(view, offset.max(0.0));
+    }
+
+    fn table_editable(&self, tab: u64) -> bool {
+        self.tables.get(&tab).is_some_and(|state| {
+            !state.loading
+                && !state.saving
+                && !self
+                    .profile(state.profile_id)
+                    .is_some_and(|profile| profile.read_only)
+                && state
+                    .page
+                    .as_ref()
+                    .is_some_and(|page| !page.metadata.primary_key.is_empty())
+        })
+    }
+
+    fn start_table_editor(&mut self, tab: u64, row_index: usize, column: usize) {
+        if !self.table_editable(tab) {
+            return;
+        }
+        let Some(state) = self.tables.get(&tab) else {
+            return;
+        };
+        let Some(page) = &state.page else {
+            return;
+        };
+        let Some(row) = page.rows.get(row_index) else {
+            return;
+        };
+        let Some(column_meta) = page.metadata.columns.get(column) else {
+            return;
+        };
+        if page.metadata.primary_key.contains(&column_meta.name)
+            || state
+                .pending
+                .get(&page.metadata, row)
+                .is_some_and(|pending| pending.deleted)
+        {
+            return;
+        }
+        let value = state.pending.values(&page.metadata, row);
+        let text = value.get(column).map_or_else(String::new, |value| {
+            if value.is_null() {
+                String::new()
+            } else {
+                format::display_value(value)
+            }
+        });
+        let field = FieldId::TableCell(tab, row_index, column);
+        self.fields.insert(field, TextField::with_text(text, false));
+        self.focus = Some(field);
+    }
+
+    fn finish_table_editor(&mut self, commit: bool) {
+        let Some(FieldId::TableCell(tab, row_index, column)) = self.focus else {
+            return;
+        };
+        let field = FieldId::TableCell(tab, row_index, column);
+        let text = self.fields.remove(&field).map(|field| field.text);
+        self.focus = None;
+        if !commit {
+            return;
+        }
+        let Some(text) = text else {
+            return;
+        };
+        let result = self.tables.get_mut(&tab).and_then(|state| {
+            let page = state.page.as_ref()?;
+            let row = page.rows.get(row_index)?;
+            let key = row_key(&page.metadata, row);
+            let result = state.pending.set_cell(&page.metadata, row, column, &text);
+            if result.is_ok() {
+                state.preview_row = key;
+            }
+            Some(result)
+        });
+        if let Some(Err(error)) = result {
+            self.error = Some((error, self.time));
+        }
+    }
+
+    fn select_table_row(&mut self, tab: u64, row_index: usize) {
+        let Some(state) = self.tables.get_mut(&tab) else {
+            return;
+        };
+        if state.loading || state.saving {
+            return;
+        }
+        let Some(page) = &state.page else {
+            return;
+        };
+        let Some(row) = page.rows.get(row_index) else {
+            return;
+        };
+        let key = table_row_key(&page.metadata, row, page.offset as usize + row_index);
+        if self.input_shift {
+            let anchor = state.selection_anchor.unwrap_or(row_index);
+            let (start, end) = if anchor <= row_index {
+                (anchor, row_index)
+            } else {
+                (row_index, anchor)
+            };
+            if !self.input_control {
+                state.selected_rows.clear();
+            }
+            for index in start..=end {
+                if let Some(row) = page.rows.get(index) {
+                    state.selected_rows.insert(table_row_key(
+                        &page.metadata,
+                        row,
+                        page.offset as usize + index,
+                    ));
+                }
+            }
+        } else if self.input_control {
+            if !state.selected_rows.remove(&key) {
+                state.selected_rows.insert(key.clone());
+            }
+            state.selection_anchor = Some(row_index);
+        } else {
+            state.selected_rows.clear();
+            state.selected_rows.insert(key.clone());
+            state.selection_anchor = Some(row_index);
+        }
+        if state.pending.get(&page.metadata, row).is_some() {
+            state.preview_row = Some(key);
+        }
+    }
+
+    fn stage_selected_rows(&mut self, tab: u64) {
+        if !self.table_editable(tab) {
+            return;
+        }
+        let result = self.tables.get_mut(&tab).and_then(|state| {
+            let page = state.page.as_ref()?;
+            let rows = page
+                .rows
+                .iter()
+                .enumerate()
+                .filter(|(index, row)| {
+                    state.selected_rows.contains(&table_row_key(
+                        &page.metadata,
+                        row,
+                        page.offset as usize + index,
+                    ))
+                })
+                .map(|(_, row)| row.clone())
+                .collect::<Vec<_>>();
+            if rows.is_empty() {
+                return None;
+            }
+            let result = state.pending.toggle_delete(&page.metadata, &rows);
+            if result.is_ok() {
+                state.preview_row = rows.first().and_then(|row| row_key(&page.metadata, row));
+            }
+            Some(result)
+        });
+        if let Some(Err(error)) = result {
+            self.error = Some((error, self.time));
+        }
     }
 
     // ------------------------------------------------------------------
@@ -928,6 +1211,11 @@ impl Ui {
             .rev()
             .find(|region| contains(region.rect, x, y))
             .map(|region| region.action.clone());
+        if matches!(self.focus, Some(FieldId::TableCell(..)))
+            && !matches!(action, Some(Action::ClickField { field, .. }) if Some(field) == self.focus)
+        {
+            self.finish_table_editor(true);
+        }
         self.pressed = action.clone();
         if let Some(Action::ClickField { field, .. }) = action {
             self.focus = Some(field);
@@ -935,7 +1223,7 @@ impl Ui {
         }
     }
 
-    pub fn on_mouse_up(&mut self, r: &mut Renderer, x: f32, y: f32) {
+    pub fn on_mouse_up(&mut self, r: &mut Renderer, x: f32, y: f32, control: bool, shift: bool) {
         let action = self
             .regions
             .iter()
@@ -945,8 +1233,22 @@ impl Ui {
         let pressed = self.pressed.take();
         if let (Some(pressed), Some(released)) = (pressed, action) {
             if pressed == released {
+                self.input_control = control;
+                self.input_shift = shift;
                 self.dispatch(r, pressed);
             }
+        }
+    }
+
+    pub fn on_double_click(&mut self, x: f32, y: f32) {
+        let action = self
+            .regions
+            .iter()
+            .rev()
+            .find(|region| contains(region.rect, x, y))
+            .map(|region| region.action.clone());
+        if let Some(Action::TableCell { tab, row, column }) = action {
+            self.start_table_editor(tab, row, column);
         }
     }
 
@@ -1000,6 +1302,10 @@ impl Ui {
             return false;
         }
         if key == VK_ESCAPE.0 as u32 {
+            if matches!(self.focus, Some(FieldId::TableCell(..))) {
+                self.finish_table_editor(false);
+                return true;
+            }
             self.focus = None;
             return true;
         }
@@ -1012,6 +1318,10 @@ impl Ui {
             return true;
         }
         if key == VK_RETURN.0 as u32 {
+            if matches!(field, FieldId::TableCell(..)) {
+                self.finish_table_editor(true);
+                return true;
+            }
             if control {
                 if let FieldId::Query(tab) = field {
                     let sql = self.query_target(tab);
@@ -1266,14 +1576,69 @@ impl Ui {
             Action::CopyTableCsv(tab) => {
                 if let Some(state) = self.tables.get(&tab) {
                     if let Some(page) = &state.page {
-                        let document = format::csv_document(&page.columns, &page.rows);
+                        let rows = visible_table_rows(state, page);
+                        let document = table_csv_document(page, &rows);
                         crate::platform::set_clipboard_text(&document);
-                        self.show_toast("Copied the current page as CSV.");
+                        self.show_toast(&format!(
+                            "Copied {} visible {} as CSV.",
+                            rows.len(),
+                            if rows.len() == 1 { "row" } else { "rows" }
+                        ));
                     }
                 }
             }
-            Action::ExportTableCsv(tab) => self.export_csv(tab),
-            Action::RefreshTable(tab) => self.load_table_page(tab),
+            Action::ExportTableCsv(tab) => {
+                if self
+                    .tables
+                    .get(&tab)
+                    .is_some_and(|state| !state.pending.is_empty())
+                {
+                    self.error = Some((
+                        "Save or discard pending row changes before exporting.".to_owned(),
+                        self.time,
+                    ));
+                } else {
+                    self.export_csv(tab);
+                }
+            }
+            Action::RefreshTable(tab) => {
+                if self
+                    .tables
+                    .get(&tab)
+                    .is_some_and(|state| !state.pending.is_empty())
+                {
+                    self.error = Some((
+                        "Save or discard pending row changes before refreshing.".to_owned(),
+                        self.time,
+                    ));
+                } else {
+                    self.load_table_page(tab);
+                }
+            }
+            Action::TableCell { tab, row, .. } => self.select_table_row(tab, row),
+            Action::StageDelete(tab) => self.stage_selected_rows(tab),
+            Action::SaveTable(tab) => self.save_table(tab),
+            Action::DiscardTable(tab) => {
+                if let Some(state) = self.tables.get_mut(&tab) {
+                    if !state.loading && !state.saving {
+                        state.pending.clear();
+                        state.preview_row = None;
+                    }
+                }
+            }
+            Action::DiscardTableRow { tab, row } => {
+                if let Some(state) = self.tables.get_mut(&tab) {
+                    if !state.loading && !state.saving {
+                        let Some(page) = &state.page else {
+                            return;
+                        };
+                        if let Some(row) = page.rows.get(row) {
+                            state.pending.discard_row(&page.metadata, row);
+                            state.preview_row = None;
+                        }
+                    }
+                }
+            }
             Action::ToggleMenu(profile_id) => {
                 self.open_menu = (self.open_menu != Some(profile_id)).then_some(profile_id);
             }
@@ -1297,18 +1662,27 @@ impl Ui {
             }
             Action::PagePrev(tab) => {
                 if let Some(state) = self.tables.get_mut(&tab) {
+                    if state.loading || state.saving {
+                        return;
+                    }
                     state.page_index = state.page_index.saturating_sub(1);
                 }
                 self.load_table_page(tab);
             }
             Action::PageNext(tab) => {
                 if let Some(state) = self.tables.get_mut(&tab) {
+                    if state.loading || state.saving {
+                        return;
+                    }
                     state.page_index += 1;
                 }
                 self.load_table_page(tab);
             }
             Action::SortColumn { tab, column } => {
                 if let Some(state) = self.tables.get_mut(&tab) {
+                    if state.loading || state.saving {
+                        return;
+                    }
                     let descending = state
                         .order_by
                         .as_ref()
@@ -1664,6 +2038,48 @@ pub fn set_field(fields: &mut HashMap<FieldId, TextField>, field: FieldId, value
     }
 }
 
+pub fn table_row_key(
+    metadata: &dbm_engine::models::TableMetadata,
+    row: &[serde_json::Value],
+    fallback_index: usize,
+) -> String {
+    row_key(metadata, row).unwrap_or_else(|| format!("page-row:{fallback_index}"))
+}
+
+pub fn visible_table_rows(state: &TableState, page: &TablePage) -> Vec<Vec<serde_json::Value>> {
+    page.rows
+        .iter()
+        .filter(|row| {
+            !state
+                .pending
+                .get(&page.metadata, row)
+                .is_some_and(|pending| pending.deleted)
+        })
+        .map(|row| state.pending.values(&page.metadata, row))
+        .collect()
+}
+
+pub fn table_csv_document(page: &TablePage, rows: &[Vec<serde_json::Value>]) -> String {
+    let columns = page
+        .metadata
+        .columns
+        .iter()
+        .map(|column| column.name.clone())
+        .collect::<Vec<_>>();
+    format::csv_document(&columns, rows)
+}
+
+fn mutations_equal(left: &[RowMutation], right: &[RowMutation]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.original == right.original
+                && left.changes == right.changes
+                && left.primary_key == right.primary_key
+                && left.xmin == right.xmin
+                && left.deleted == right.deleted
+        })
+}
+
 fn resolve_password(
     engine: &dbm_engine::state::AppState,
     input: &SaveProfileInput,
@@ -1698,5 +2114,103 @@ pub fn column_width(data_type: &str) -> f32 {
         220.0
     } else {
         160.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dbm_engine::models::{TableColumn, TableMetadata};
+    use serde_json::json;
+
+    fn table_state(page: TablePage) -> TableState {
+        TableState {
+            profile_id: Uuid::nil(),
+            schema: "public".into(),
+            table: "products".into(),
+            page: Some(page),
+            page_index: 0,
+            limit: 200,
+            order_by: None,
+            filters: Vec::new(),
+            columns: vec![
+                ("id".into(), "integer".into()),
+                ("name".into(), "text".into()),
+            ],
+            loading: false,
+            saving: false,
+            saving_mutations: None,
+            status: String::new(),
+            pending: PendingEdits::default(),
+            selected_rows: HashSet::new(),
+            selection_anchor: None,
+            preview_row: None,
+        }
+    }
+
+    fn page() -> TablePage {
+        TablePage {
+            metadata: TableMetadata {
+                schema: "public".into(),
+                table: "products".into(),
+                columns: vec![
+                    TableColumn {
+                        name: "id".into(),
+                        data_type: "integer".into(),
+                        nullable: false,
+                        default_value: None,
+                        ordinal: 0,
+                    },
+                    TableColumn {
+                        name: "name".into(),
+                        data_type: "text".into(),
+                        nullable: false,
+                        default_value: None,
+                        ordinal: 1,
+                    },
+                ],
+                primary_key: vec!["id".into()],
+                has_xmin: true,
+            },
+            columns: vec!["id".into(), "name".into(), "__dbm_xmin".into()],
+            rows: vec![
+                vec![json!(1), json!("Canvas"), json!("41")],
+                vec![json!(2), json!("Runner"), json!("42")],
+            ],
+            total_rows: Some(2),
+            offset: 0,
+            limit: 200,
+            has_more: false,
+        }
+    }
+
+    #[test]
+    fn copied_visible_rows_use_drafts_and_omit_deletions_and_xmin() {
+        let page = page();
+        let mut state = table_state(page.clone());
+        state
+            .pending
+            .set_cell(&page.metadata, &page.rows[0], 1, "Canvas high top")
+            .unwrap();
+        state
+            .pending
+            .toggle_delete(&page.metadata, &[page.rows[1].clone()])
+            .unwrap();
+        let submitted = state.pending.mutations();
+
+        assert_eq!(
+            visible_table_rows(&state, &page),
+            vec![vec![json!(1), json!("Canvas high top")]]
+        );
+        assert_eq!(
+            table_csv_document(&page, &visible_table_rows(&state, &page)),
+            "id,name\n1,Canvas high top"
+        );
+        assert!(mutations_equal(&submitted, &state.pending.mutations()));
+        state
+            .pending
+            .set_cell(&page.metadata, &page.rows[0], 1, "Newer draft")
+            .unwrap();
+        assert!(!mutations_equal(&submitted, &state.pending.mutations()));
     }
 }

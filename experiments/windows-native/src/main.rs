@@ -27,10 +27,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_SH
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, GetMessageW,
     GetWindowLongPtrW, KillTimer, LoadCursorW, PostQuitMessage, RegisterClassW, SetTimer,
-    SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-    GWLP_USERDATA, IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE, WM_DESTROY,
-    WM_DPICHANGED, WM_GETMINMAXINFO, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    SetWindowLongPtrW, ShowWindow, TranslateMessage, CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW,
+    CW_USEDEFAULT, GWLP_USERDATA, IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CHAR, WM_CLOSE,
+    WM_DESTROY, WM_DPICHANGED, WM_GETMINMAXINFO, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSW,
+    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
 };
 
 mod satoshi {
@@ -50,7 +51,7 @@ fn main() -> Result<()> {
         let instance = GetModuleHandleW(None)?;
         let class_name = w!("DbmNativeWindow");
         let class = WNDCLASSW {
-            style: CS_HREDRAW | CS_VREDRAW,
+            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
             lpfnWndProc: Some(window_proc),
             hInstance: HINSTANCE(instance.0),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
@@ -176,7 +177,22 @@ unsafe extern "system" fn window_proc(
             with_app(hwnd, |app| {
                 let scale = app.renderer.dpi_scale();
                 let App { renderer, ui } = app;
-                ui.on_mouse_up(renderer, x / scale, y / scale);
+                ui.on_mouse_up(
+                    renderer,
+                    x / scale,
+                    y / scale,
+                    key_down(VK_CONTROL.0 as i32),
+                    key_down(VK_SHIFT.0 as i32),
+                );
+            });
+            let _ = InvalidateRect(hwnd, None, false);
+            LRESULT(0)
+        }
+        WM_LBUTTONDBLCLK => {
+            let (x, y) = point_from(lparam);
+            with_app(hwnd, |app| {
+                let scale = app.renderer.dpi_scale();
+                app.ui.on_double_click(x / scale, y / scale);
             });
             let _ = InvalidateRect(hwnd, None, false);
             LRESULT(0)

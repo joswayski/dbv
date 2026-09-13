@@ -166,12 +166,19 @@ stays the fallback until they reach parity and gain installers.
   text editor. It builds and tests on Windows CI and has been exercised under
   Wine against live databases; it has not been run on Windows by hand yet.
 - **macOS:** a SwiftUI/AppKit app under `experiments/macos-native` with a tested
-  Rust bridge. The app typechecks and builds a bundle on a macOS CI runner; it
-  has not been launched yet.
+  Rust bridge. The earlier slice built on macOS CI; the new staged-edit Swift
+  changes still need macOS compilation and hands-on verification.
+
+All three now implement local staged cell edits and selected-row deletions,
+amber/red pending states, before/after previews, and Save/Discard through the
+shared mutation engine. Primary keys stay locked and read-only/PK-less tables
+cannot be edited. Linux has been exercised against PostgreSQL for Save, undo,
+failed writes, and row conflicts; Windows and macOS still need native runtime
+verification of the new editing workflow.
 
 What is still missing before the native frontends can replace the Tauri app:
-staged inline edits and deletes, structured filters on Windows and macOS, tab
-rename/collapse, complete visual/animation parity, and installer, signing, and
+structured filters on Windows and macOS, tab rename/collapse, complete
+visual/animation parity, and installer, signing, and
 updater integration. The current visual pass brings profile-tinted tabs,
 typed full-width grids, and dark panel treatments closer to Tauri; Linux has
 rendered regression coverage, while macOS still needs on-device visual review.

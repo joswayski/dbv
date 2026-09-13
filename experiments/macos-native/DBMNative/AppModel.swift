@@ -49,6 +49,8 @@ final class AppModel: ObservableObject {
     @Published var orders: [String: OrderSpec] = [:]
     @Published var tableStatus: [String: String] = [:]
     @Published var loadingTables: Set<String> = []
+    @Published var pendingRows: [String: [String: PendingRow]] = [:]
+    @Published var savingTables: Set<String> = []
 
     @Published var sqlText: [String: String] = [:]
     /// Caret and selection per query tab, reported by the AppKit editor.
@@ -212,6 +214,8 @@ final class AppModel: ObservableObject {
         pageIndex.removeValue(forKey: id)
         orders.removeValue(forKey: id)
         tableStatus.removeValue(forKey: id)
+        pendingRows.removeValue(forKey: id)
+        savingTables.remove(id)
         sqlText.removeValue(forKey: id)
         selections.removeValue(forKey: id)
         queries.removeValue(forKey: id)
@@ -238,10 +242,11 @@ final class AppModel: ObservableObject {
 
     // MARK: - Table pages
 
-    func loadPage(_ tabId: String) async {
+    func loadPage(_ tabId: String, whileSaving: Bool = false) async {
         guard let tab = tabs.first(where: { $0.id == tabId }),
               case let .table(schema, table) = tab.kind
         else { return }
+        guard !loadingTables.contains(tabId), whileSaving || !savingTables.contains(tabId) else { return }
         loadingTables.insert(tabId)
         tableStatus[tabId] = "Loading…"
         defer { loadingTables.remove(tabId) }
@@ -272,12 +277,14 @@ final class AppModel: ObservableObject {
     }
 
     func changePage(_ tabId: String, delta: Int) async {
+        guard !loadingTables.contains(tabId), !savingTables.contains(tabId) else { return }
         let current = pageIndex[tabId] ?? 0
         pageIndex[tabId] = max(0, current + delta)
         await loadPage(tabId)
     }
 
     func sort(_ tabId: String, column: String) async {
+        guard !loadingTables.contains(tabId), !savingTables.contains(tabId) else { return }
         let existing = orders[tabId]
         let descending = existing?.column == column && existing?.descending == false
         orders[tabId] = OrderSpec(column: column, descending: descending)
@@ -285,15 +292,181 @@ final class AppModel: ObservableObject {
         await loadPage(tabId)
     }
 
+    func rowKey(tabId: String, row: [JSONValue], fallbackIndex: Int) -> String {
+        guard let metadata = pages[tabId]?.metadata, !metadata.primaryKey.isEmpty else {
+            return "row:\(fallbackIndex):\(encodedKey(row))"
+        }
+        let values = metadata.primaryKey.map { key -> JSONValue in
+            guard let index = metadata.columns.firstIndex(where: { $0.name == key }), index < row.count else {
+                return .null
+            }
+            return row[index]
+        }
+        return "pk:\(encodedKey(values))"
+    }
+
+    func displayValues(_ tabId: String, row: [JSONValue], fallbackIndex: Int) -> [JSONValue] {
+        let visibleCount = pages[tabId]?.metadata.columns.count ?? row.count
+        let key = rowKey(tabId: tabId, row: row, fallbackIndex: fallbackIndex)
+        return pendingRows[tabId]?[key]?.changes ?? Array(row.prefix(visibleCount))
+    }
+
+    func stageCell(_ tabId: String, row: [JSONValue], fallbackIndex: Int, column: Int, value: JSONValue) {
+        guard let page = pages[tabId],
+              !loadingTables.contains(tabId),
+              !savingTables.contains(tabId),
+              !page.metadata.primaryKey.isEmpty,
+              column < page.metadata.columns.count,
+              !page.metadata.primaryKey.contains(page.metadata.columns[column].name),
+              profile(tabs.first(where: { $0.id == tabId })?.profileId ?? "")?.readOnly == false
+        else { return }
+        let key = rowKey(tabId: tabId, row: row, fallbackIndex: fallbackIndex)
+        var tabPending = pendingRows[tabId] ?? [:]
+        guard tabPending[key]?.deleted != true else { return }
+        let basePending: PendingRow
+        if let existing = tabPending[key] {
+            basePending = existing
+        } else if let created = pendingFromRow(page: page, row: row) {
+            basePending = created
+        } else {
+            errorMessage = "This PostgreSQL row is missing its concurrency value; refresh before editing."
+            return
+        }
+        var pending = basePending
+        guard !page.metadata.hasXmin || pending.xmin != nil else {
+            errorMessage = "This PostgreSQL row is missing its concurrency value; refresh before editing."
+            return
+        }
+        pending.changes[column] = value
+        if !pending.deleted, pending.changes == pending.original {
+            tabPending.removeValue(forKey: key)
+        } else {
+            tabPending[key] = pending
+        }
+        pendingRows[tabId] = tabPending
+    }
+
+    func setRowsDeleted(_ tabId: String, rows: [(row: [JSONValue], fallbackIndex: Int)], deleted: Bool) {
+        guard let page = pages[tabId],
+              !loadingTables.contains(tabId),
+              !savingTables.contains(tabId),
+              !page.metadata.primaryKey.isEmpty,
+              profile(tabs.first(where: { $0.id == tabId })?.profileId ?? "")?.readOnly == false
+        else { return }
+        var tabPending = pendingRows[tabId] ?? [:]
+        for entry in rows {
+            let key = rowKey(tabId: tabId, row: entry.row, fallbackIndex: entry.fallbackIndex)
+            let pending: PendingRow?
+            if let existing = tabPending[key] {
+                pending = existing
+            } else {
+                pending = pendingFromRow(page: page, row: entry.row)
+            }
+            guard var pending else {
+                errorMessage = "This PostgreSQL row is missing its concurrency value; refresh before deleting."
+                continue
+            }
+            guard !page.metadata.hasXmin || pending.xmin != nil else {
+                errorMessage = "This PostgreSQL row is missing its concurrency value; refresh before deleting."
+                continue
+            }
+            pending.deleted = deleted
+            if !deleted, pending.changes == pending.original {
+                tabPending.removeValue(forKey: key)
+            } else {
+                tabPending[key] = pending
+            }
+        }
+        pendingRows[tabId] = tabPending
+    }
+
+    func discardPendingRow(_ tabId: String, key: String) {
+        guard !loadingTables.contains(tabId), !savingTables.contains(tabId) else { return }
+        guard var tabPending = pendingRows[tabId], let pending = tabPending[key] else { return }
+        if pending.deleted, pending.changes != pending.original {
+            tabPending[key]?.deleted = false
+        } else {
+            tabPending.removeValue(forKey: key)
+        }
+        pendingRows[tabId] = tabPending
+    }
+
+    func discardPendingRows(_ tabId: String) {
+        guard !loadingTables.contains(tabId), !savingTables.contains(tabId) else { return }
+        pendingRows[tabId] = [:]
+    }
+
+    func savePendingRows(_ tabId: String) async -> Bool {
+        guard let tab = tabs.first(where: { $0.id == tabId }),
+              case let .table(schema, table) = tab.kind,
+              !loadingTables.contains(tabId),
+              !savingTables.contains(tabId),
+              let pending = pendingRows[tabId],
+              !pending.isEmpty
+        else { return false }
+        if pages[tabId]?.metadata.hasXmin == true, pending.values.contains(where: { $0.xmin == nil }) {
+            errorMessage = "A pending PostgreSQL row is missing its concurrency value; discard and refresh before saving."
+            return false
+        }
+        let batch = MutationBatch(
+            profileId: tab.profileId,
+            schema: schema,
+            table: table,
+            mutations: pending.values.map {
+                RowMutation(
+                    original: $0.original,
+                    changes: $0.changes,
+                    primaryKey: $0.primaryKey,
+                    xmin: $0.xmin,
+                    deleted: $0.deleted
+                )
+            }
+        )
+        savingTables.insert(tabId)
+        defer { savingTables.remove(tabId) }
+        do {
+            let result: MutationResult = try await Bridge.call(
+                ["op": "apply_mutations", "batch": try batch.jsonObject()],
+                as: MutationResult.self
+            )
+            pendingRows[tabId] = [:]
+            await loadPage(tabId, whileSaving: true)
+            if result.conflicts.isEmpty {
+                toast = "\(result.applied) \(result.applied == 1 ? "change" : "changes") saved."
+            } else {
+                errorMessage = "\(result.conflicts.count) row conflict(s); the table was refreshed."
+            }
+            return true
+        } catch {
+            // Keep every draft after transport, validation, or database errors.
+            show(error)
+            return false
+        }
+    }
+
     func copyCSV(_ tabId: String) {
-        guard let page = pages[tabId] else { return }
-        let document = CSV.document(columns: page.columns, rows: page.rows)
+        guard let page = pages[tabId],
+              !loadingTables.contains(tabId),
+              !savingTables.contains(tabId)
+        else { return }
+        let rows = page.rows.enumerated().compactMap { index, row -> [JSONValue]? in
+            let fallbackIndex = page.offset + index
+            let key = rowKey(tabId: tabId, row: row, fallbackIndex: fallbackIndex)
+            if pendingRows[tabId]?[key]?.deleted == true { return nil }
+            return displayValues(tabId, row: row, fallbackIndex: fallbackIndex)
+        }
+        let document = CSV.document(columns: page.metadata.columns.map(\.name), rows: rows)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(document, forType: .string)
-        toast = "Copied the current page as CSV."
+        toast = "Copied \(rows.count) visible \(rows.count == 1 ? "row" : "rows") as CSV."
     }
 
     func exportCSV(_ tabId: String, path: String) async {
+        guard !loadingTables.contains(tabId), !savingTables.contains(tabId) else { return }
+        guard pendingRows[tabId]?.isEmpty != false else {
+            errorMessage = "Save or discard pending row changes before exporting."
+            return
+        }
         guard let tab = tabs.first(where: { $0.id == tabId }),
               case let .table(schema, table) = tab.kind
         else { return }
@@ -508,6 +681,40 @@ final class AppModel: ObservableObject {
 
     func show(_ error: Error) {
         errorMessage = error.localizedDescription
+    }
+
+    private func pendingFromRow(page: TablePage, row: [JSONValue]) -> PendingRow? {
+        let original = Array(row.prefix(page.metadata.columns.count))
+        let primaryKey = page.metadata.primaryKey.map { key -> JSONValue in
+            guard let index = page.metadata.columns.firstIndex(where: { $0.name == key }), index < original.count else {
+                return .null
+            }
+            return original[index]
+        }
+        let xmin: String?
+        if page.metadata.hasXmin, row.count > page.metadata.columns.count {
+            switch row[page.metadata.columns.count] {
+            case .null: xmin = nil
+            default: xmin = row[page.metadata.columns.count].display
+            }
+        } else {
+            xmin = nil
+        }
+        guard !page.metadata.hasXmin || xmin != nil else { return nil }
+        return PendingRow(
+            original: original,
+            changes: original,
+            primaryKey: primaryKey,
+            xmin: xmin,
+            deleted: false
+        )
+    }
+
+    private func encodedKey(_ values: [JSONValue]) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(values) else { return values.map(\.display).joined(separator: "|") }
+        return data.base64EncodedString()
     }
 
     /// Statement targeting, mirroring `sql_target.rs` from the shared crate.

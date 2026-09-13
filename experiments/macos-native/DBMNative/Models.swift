@@ -240,6 +240,34 @@ struct TablePage: Codable {
     var hasMore: Bool
 }
 
+struct PendingRow: Hashable {
+    var original: [JSONValue]
+    var changes: [JSONValue]
+    var primaryKey: [JSONValue]
+    var xmin: String?
+    var deleted: Bool
+}
+
+struct RowMutation: Codable {
+    var original: [JSONValue]
+    var changes: [JSONValue]
+    var primaryKey: [JSONValue]
+    var xmin: String?
+    var deleted: Bool
+}
+
+struct MutationBatch: Codable {
+    var profileId: String
+    var schema: String
+    var table: String
+    var mutations: [RowMutation]
+}
+
+struct MutationResult: Codable {
+    var applied: Int
+    var conflicts: [[JSONValue]]
+}
+
 // MARK: - Queries
 
 struct QueryColumn: Codable, Hashable {

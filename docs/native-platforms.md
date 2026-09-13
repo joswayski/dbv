@@ -46,7 +46,8 @@ experiments/macos-native      SwiftUI/AppKit presentation + Rust C-ABI bridge
   storage, sessions, schema trees, table pages, queries, and mutations.
 - `crates/dbm-workbench` holds the presentation logic that must behave the same
   everywhere: presets, connection-URL parsing, CSV output, destructive-statement
-  detection, and statement/line targeting. Its tests run on every platform.
+  detection, statement/line targeting, and Rust table draft state. Its tests run
+  on every platform; the Swift frontend mirrors the draft contract.
 - The Tauri shell is a thin command layer over the engine; the React UI and its
   tests are unchanged.
 - Native frontends link the engine in-process (the macOS app links it through a
@@ -60,7 +61,7 @@ experiments/macos-native      SwiftUI/AppKit presentation + Rust C-ABI bridge
 | --- | --- | --- |
 | Linux | Rust + GTK4, custom CSS | Vertical slice implemented; exercised against live PostgreSQL 15 and Redis 7 under Xvfb |
 | Windows | Rust + Win32 + Direct2D/DirectWrite | Vertical slice implemented; built and tested on Windows CI and exercised under Wine against live PostgreSQL and Redis. Not run on Windows by hand |
-| macOS | Swift + SwiftUI/AppKit + Rust bridge | Vertical slice implemented; the bridge is tested on Linux and the app typechecks and builds on a macOS CI runner. Not launched yet |
+| macOS | Swift + SwiftUI/AppKit + Rust bridge | Vertical slice implemented; the bridge is tested on Linux. Earlier slice built on macOS CI; new staged-edit Swift changes need macOS compilation and runtime verification |
 
 All three are experiments: none is wired into installers, the updater, or
 release artifacts yet. They are the direction of record for the next release,
@@ -91,7 +92,13 @@ Shared behavior (identical across the three):
   connections get a command workbench instead of SQL.
 - **Table tabs:** paginated previews (200 rows), ordering, refresh, copy the
   current page as CSV, and full filtered CSV export with a large-export
-  confirmation.
+  confirmation. Double-click non-PK cells to stage edits; select rows to stage
+  deletion. Amber edits/red deleted rows, before/after previews, undo-delete,
+  pending counts, and Save/Discard use the shared engine's existing mutations.
+  Drafts stay local across paging/sorting until Save. Undo-delete retains prior
+  edits; read-only and PK-less tables cannot be changed. Refresh and full export
+  require saving/discarding drafts; visible CSV copies include drafts and omit
+  deleted rows. CSV headers and values exclude PostgreSQL's hidden `xmin`.
 - **Chrome:** DBM's dark surfaces and cyan accent, custom confirmation windows
   for destructive actions, an error banner, and transient toasts. No stock
   GTK/AppKit/Win32 confirmation dialogs are used for DBM actions.
@@ -99,7 +106,7 @@ Shared behavior (identical across the three):
 Platform notes:
 
 - **Linux** keeps the editor in a plain GTK `TextView` with statement targeting
-  from caret offsets, and offers a structured filter popover with the same
+  from caret offsets, and offers a structured filter panel with the same
   thirteen operators as the Tauri UI.
 - **Windows** paints everything with Direct2D, including a DirectWrite-backed
   text editor with caret, selection, and word movement, so no stock controls are
@@ -128,26 +135,27 @@ macOS bundle registers Satoshi with `ATSApplicationFontsPath`.
 
 The GTK visual regression test renders real widgets under Xvfb and samples
 pixels to catch Adwaita backgrounds, unstyled GtkBox tabs, lost profile color,
-and headers that fail to fill the grid. Run it with:
+headers that fail to fill the grid, and missing/incorrect edit and delete
+cell tints. Run it with:
 
 ```sh
 xvfb-run -a env GSK_RENDERER=cairo cargo test --manifest-path experiments/linux-native/Cargo.toml -- --ignored
 ```
 
-This visual pass was exercised against disposable PostgreSQL data in GTK and
-Wine. macOS changes still require compilation and visual review on a Mac;
-Linux screenshots do not establish macOS or real-Windows parity.
+The first visual pass was exercised against disposable PostgreSQL data in GTK
+and Wine. The staged-edit pass additionally exercised GTK Save, failed writes
+with draft retention, undo/delete, and PostgreSQL partial conflicts (successful
+rows commit; conflicting rows refresh without overwriting newer values).
+Windows staged edits are cross-compiled, with seven tests passing under Wine
+and a Wine smoke test of inline edits, row deletion, and before/after previews.
+macOS Swift changes still require compilation and visual review on a Mac.
+Linux and Wine screenshots do not establish macOS or real-Windows parity.
 
 ## Known gaps versus the Tauri app
 
-- Staged inline edits and deletes are not built yet on any native frontend. The
-  shared engine already supports mutations (including PostgreSQL `xmin`
-  concurrency) and the Tauri UI implements them, so this is UI work. A
-  `SELECT * FROM table` statement opens the full table view on every native
-  frontend, matching the Tauri workbench, but that view is still read-only.
 - Structured table filters exist on Linux only; Windows and macOS do ordering,
-  paging, and CSV export. Typed headers and dark grid treatments are implemented
-  on all three, but selection/edit effects are not.
+  paging, and CSV export. Staged edits/deletes are implemented on all three but
+  the Windows/macOS editing interactions still need native runtime verification.
 - Query tabs cannot be renamed or collapsed. Table columns cannot be collapsed;
   GTK supports resizing, while Windows and macOS do not yet.
 - Full visual/animation parity remains open: editor syntax highlighting,
@@ -249,8 +257,9 @@ What has actually been verified:
   drops a few glyphs in the 9 px eyebrow labels; everything else rendered.
   Nothing has been run on Windows itself.
 - macOS bridge: tests for request validation, profile round-trip, and URL import,
-  run on Linux. The SwiftUI layer typechecks and links into an app bundle on the
-  macOS CI runner (macOS 14, arm64); it has not been launched.
+  plus mutation dispatch and hidden-column CSV handling, run on Linux. The
+  earlier SwiftUI slice typechecked and linked on the macOS CI runner (macOS 14,
+  arm64); the staged-edit changes have not been compiled or launched on macOS.
 
 The adapters decode PostgreSQL `numeric`, `uuid`, and `bytea` values directly:
 `uuid` and `bytea` use tokio-postgres' built-in support, and `numeric` has its

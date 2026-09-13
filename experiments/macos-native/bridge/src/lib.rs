@@ -16,6 +16,7 @@
 //! {"op":"disconnect","profileId":"…"}
 //! {"op":"schema_tree","profileId":"…"}
 //! {"op":"table_page","request":{...}}
+//! {"op":"apply_mutations","batch":{...}}
 //! {"op":"run_query","profileId":"…","sql":"…","maxRows":10000}
 //! {"op":"history","profileId":"…","database":"…","limit":100}
 //! {"op":"export_csv","request":{...},"path":"…"}
@@ -30,7 +31,8 @@ use std::sync::{Arc, OnceLock};
 
 use dbm_engine::error::{AppError, AppResult};
 use dbm_engine::models::{
-    ConnectionProfile, QueryHistoryEntry, SaveProfileInput, SchemaNode, TablePageRequest,
+    ConnectionProfile, MutationBatch, QueryHistoryEntry, SaveProfileInput, SchemaNode, TablePage,
+    TablePageRequest,
 };
 use dbm_engine::session::DbSession;
 use dbm_engine::state::AppState;
@@ -199,6 +201,14 @@ fn handle(state: &Arc<AppState>, op: &str, request: &Value) -> AppResult<Value> 
                 serde_json::to_value(page).map_err(|error| AppError::Storage(error.to_string()))
             })
         }
+        "apply_mutations" => {
+            let batch: MutationBatch = decode_field(request, "batch")?;
+            runtime().block_on(async {
+                let session = state.session(batch.profile_id).await?;
+                let result = session.apply_mutations(&batch).await?;
+                serde_json::to_value(result).map_err(|error| AppError::Storage(error.to_string()))
+            })
+        }
         "run_query" => {
             let request: RunQueryRequest = decode(request)?;
             runtime().block_on(async {
@@ -248,19 +258,7 @@ fn handle(state: &Arc<AppState>, op: &str, request: &Value) -> AppResult<Value> 
                             ..request.request.clone()
                         })
                         .await?;
-                    if offset == 0 {
-                        document.push_str(&format::csv_line(
-                            &page
-                                .columns
-                                .iter()
-                                .map(|name| Value::String(name.clone()))
-                                .collect::<Vec<_>>(),
-                        ));
-                    }
-                    for row in &page.rows {
-                        document.push('\n');
-                        document.push_str(&format::csv_line(row));
-                    }
+                    append_csv_page(&mut document, &page, offset == 0);
                     rows_written += page.rows.len() as u64;
                     if !page.has_more {
                         break;
@@ -309,6 +307,29 @@ fn handle(state: &Arc<AppState>, op: &str, request: &Value) -> AppResult<Value> 
             }))
         }
         other => Err(AppError::Unsupported(format!("unknown op {other:?}"))),
+    }
+}
+
+fn append_csv_page(document: &mut String, page: &TablePage, include_header: bool) {
+    let visible_columns = page.metadata.columns.len();
+    if include_header {
+        document.push_str(&format::csv_line(
+            &page
+                .metadata
+                .columns
+                .iter()
+                .map(|column| Value::String(column.name.clone()))
+                .collect::<Vec<_>>(),
+        ));
+    }
+    for row in &page.rows {
+        document.push('\n');
+        document.push_str(&format::csv_line(
+            &row.iter()
+                .take(visible_columns)
+                .cloned()
+                .collect::<Vec<_>>(),
+        ));
     }
 }
 
@@ -456,6 +477,64 @@ mod tests {
         assert!(response["error"]
             .as_str()
             .is_some_and(|message| message.contains("unknown op")));
+    }
+
+    #[test]
+    fn mutation_dispatcher_validates_its_batch() {
+        let state = test_state();
+        let response: Value =
+            serde_json::from_str(&call(&state, "{\"op\":\"apply_mutations\",\"batch\":{}}"))
+                .expect("json");
+        assert!(response["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("invalid request")));
+
+        let request = json!({
+            "op": "apply_mutations",
+            "batch": {
+                "profileId": Uuid::new_v4(),
+                "schema": "public",
+                "table": "users",
+                "mutations": [{
+                    "original": [1, "before"],
+                    "changes": [1, "after"],
+                    "primaryKey": [1],
+                    "xmin": "42",
+                    "deleted": false
+                }]
+            }
+        });
+        let response: Value =
+            serde_json::from_str(&call(&state, &request.to_string())).expect("json");
+        assert!(response["error"]
+            .as_str()
+            .is_some_and(|message| !message.contains("invalid request")));
+    }
+
+    #[test]
+    fn csv_export_omits_the_hidden_xmin_column_and_value() {
+        let page: TablePage = serde_json::from_value(json!({
+            "metadata": {
+                "schema": "public",
+                "table": "users",
+                "columns": [
+                    { "name": "id", "dataType": "integer", "nullable": false, "defaultValue": null, "ordinal": 1 },
+                    { "name": "name", "dataType": "text", "nullable": false, "defaultValue": null, "ordinal": 2 }
+                ],
+                "primaryKey": ["id"],
+                "hasXmin": true
+            },
+            "columns": ["id", "name", "__dbm_xmin"],
+            "rows": [[1, "Jose", "42"]],
+            "totalRows": 1,
+            "offset": 0,
+            "limit": 200,
+            "hasMore": false
+        }))
+        .expect("table page");
+        let mut document = String::new();
+        append_csv_page(&mut document, &page, true);
+        assert_eq!(document, "id,name\n1,Jose");
     }
 
     #[test]

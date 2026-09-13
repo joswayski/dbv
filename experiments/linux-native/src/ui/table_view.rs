@@ -5,7 +5,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use dbm_engine::error::AppError;
-use dbm_engine::models::{FilterCondition, FilterOperator, OrderSpec, TablePage, TablePageRequest};
+use dbm_engine::models::{
+    FilterCondition, FilterOperator, MutationBatch, OrderSpec, TablePage, TablePageRequest,
+};
 use dbm_engine::state::AppState;
 use gtk4 as gtk;
 use gtk4::prelude::*;
@@ -15,8 +17,9 @@ use uuid::Uuid;
 use crate::bridge;
 use crate::ui::app::Ui;
 use crate::ui::dialogs;
-use crate::ui::grid::{default_column_width, DataGrid};
+use crate::ui::grid::{default_column_width, DataGrid, GridEvent, GridRow};
 use dbm_workbench::format;
+use dbm_workbench::pending_edits::PendingEdits;
 
 const FILTER_OPERATORS: [(FilterOperator, &str); 13] = [
     (FilterOperator::Equals, "Equals"),
@@ -65,6 +68,20 @@ struct TableViewState {
     order_dropdown: gtk::DropDown,
     order_descending: gtk::ToggleButton,
     page: Option<TablePage>,
+    read_only: bool,
+    pending: PendingEdits,
+    loading: bool,
+    saving: bool,
+    pending_bar: gtk::Revealer,
+    pending_label: gtk::Label,
+    save_button: gtk::Button,
+    discard_button: gtk::Button,
+    delete_button: gtk::Button,
+    copy_selected_button: gtk::Button,
+    selection_label: gtk::Label,
+    filter_panel: gtk::Box,
+    preview: Option<gtk::Popover>,
+    preview_generation: u64,
 }
 
 pub fn control_label(text: &str) -> gtk::Label {
@@ -80,6 +97,7 @@ pub fn build(
     profile_id: Uuid,
     schema: String,
     table: String,
+    read_only: bool,
 ) -> gtk::Widget {
     let grid = DataGrid::new();
 
@@ -170,8 +188,39 @@ pub fn build(
     toolbar.append(&refresh_button);
 
     let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    // Selection actions must not move rows between the clicks of a double-click.
+    status_row.set_size_request(-1, 36);
     status_row.set_margin_bottom(8);
     status_row.append(&status);
+    let selection_label = gtk::Label::new(None);
+    selection_label.add_css_class("muted");
+    let copy_selected_button = gtk::Button::with_label("Copy selected");
+    copy_selected_button.add_css_class("secondary-button");
+    copy_selected_button.set_visible(false);
+    let delete_button = gtk::Button::with_label("Delete selected");
+    delete_button.add_css_class("danger-button");
+    delete_button.set_visible(false);
+    status_row.append(&selection_label);
+    status_row.append(&copy_selected_button);
+    status_row.append(&delete_button);
+
+    let pending_label = gtk::Label::new(None);
+    pending_label.set_xalign(0.0);
+    pending_label.set_hexpand(true);
+    let save_button = gtk::Button::with_label("Save changes");
+    save_button.add_css_class("primary-button");
+    let discard_button = gtk::Button::with_label("Discard all");
+    discard_button.add_css_class("secondary-button");
+    let pending_content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    pending_content.add_css_class("pending-changes");
+    pending_content.append(&pending_label);
+    pending_content.append(&discard_button);
+    pending_content.append(&save_button);
+    let pending_bar = gtk::Revealer::builder()
+        .transition_type(gtk::RevealerTransitionType::SlideDown)
+        .transition_duration(120)
+        .child(&pending_content)
+        .build();
 
     let previous_button = gtk::Button::with_label("← Previous");
     previous_button.add_css_class("secondary-button");
@@ -193,6 +242,7 @@ pub fn build(
     root.append(&toolbar);
     root.append(&filter_panel);
     root.append(&status_row);
+    root.append(&pending_bar);
     root.append(&grid.root);
     root.append(&pagination);
 
@@ -220,14 +270,95 @@ pub fn build(
         order_dropdown: order_dropdown.clone(),
         order_descending: order_descending.clone(),
         page: None,
+        read_only,
+        pending: PendingEdits::default(),
+        loading: false,
+        saving: false,
+        pending_bar,
+        pending_label,
+        save_button: save_button.clone(),
+        discard_button: discard_button.clone(),
+        delete_button: delete_button.clone(),
+        copy_selected_button: copy_selected_button.clone(),
+        selection_label,
+        filter_panel,
+        preview: None,
+        preview_generation: 0,
     }));
 
+    {
+        let weak = Rc::downgrade(&state);
+        let ui = ui.clone();
+        state.borrow().grid.connect_event(move |event| {
+            let Some(state) = weak.upgrade() else {
+                return;
+            };
+            match event {
+                GridEvent::Edited { row, column, text } => {
+                    let mut current = state.borrow_mut();
+                    if current.read_only || current.saving {
+                        return;
+                    }
+                    let Some(page) = current.page.as_ref() else {
+                        return;
+                    };
+                    let metadata = page.metadata.clone();
+                    if let Err(error) = current.pending.set_cell(&metadata, &row, column, &text) {
+                        drop(current);
+                        ui.borrow_mut().show_error(&error);
+                        return;
+                    }
+                    render_drafts(&mut current);
+                }
+                GridEvent::SelectionChanged => update_actions(&state.borrow()),
+                GridEvent::PreviewLeft => defer_close_preview(&state),
+                GridEvent::DeleteSelection => toggle_delete(&state, &ui),
+                GridEvent::Preview {
+                    row,
+                    column,
+                    anchor,
+                } => show_preview(&state, row, column, anchor),
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let ui = ui.clone();
+        delete_button.connect_clicked(move |_| toggle_delete(&state, &ui));
+    }
+    {
+        let state = state.clone();
+        discard_button.connect_clicked(move |_| {
+            let grid = state.borrow().grid.clone();
+            grid.commit_edit();
+            let mut state = state.borrow_mut();
+            if state.saving {
+                return;
+            }
+            state.pending.clear();
+            render_drafts(&mut state);
+        });
+    }
+    {
+        let state = state.clone();
+        let ui = ui.clone();
+        let engine = engine.clone();
+        save_button
+            .connect_clicked(move |_| save_changes(state.clone(), ui.clone(), engine.clone()));
+    }
     // Refresh
     {
         let state = state.clone();
         let ui = ui.clone();
         let engine = engine.clone();
-        refresh_button.connect_clicked(move |_| load(state.clone(), ui.clone(), engine.clone()));
+        refresh_button.connect_clicked(move |_| {
+            let grid = state.borrow().grid.clone();
+            grid.commit_edit();
+            if !state.borrow().pending.is_empty() {
+                return;
+            }
+            load(state.clone(), ui.clone(), engine.clone());
+        });
     }
     // Pagination
     {
@@ -343,18 +474,9 @@ pub fn build(
         });
     }
     // Copy and export
-    {
+    for (button, selected_only) in [(copy_button, false), (copy_selected_button, true)] {
         let state = state.clone();
-        copy_button.connect_clicked(move |_| {
-            let state = state.borrow();
-            let Some(page) = &state.page else {
-                return;
-            };
-            let document = format::csv_document(&page.columns, &page.rows);
-            if let Some(display) = gtk::gdk::Display::default() {
-                display.clipboard().set_text(&document);
-            }
-        });
+        button.connect_clicked(move |_| copy_rows(&state, selected_only));
     }
     {
         let state = state.clone();
@@ -366,6 +488,387 @@ pub fn build(
 
     load(state, ui, engine);
     root.upcast()
+}
+
+fn close_preview(state: &mut TableViewState) {
+    state.preview_generation += 1;
+    if let Some(preview) = state.preview.take() {
+        preview.popdown();
+        preview.unparent();
+    }
+}
+
+fn defer_close_preview(state: &Rc<RefCell<TableViewState>>) {
+    let generation = {
+        let mut state = state.borrow_mut();
+        state.preview_generation += 1;
+        state.preview_generation
+    };
+    let weak = Rc::downgrade(state);
+    gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(180), move || {
+        let Some(state) = weak.upgrade() else {
+            return;
+        };
+        let mut state = state.borrow_mut();
+        if state.preview_generation == generation {
+            close_preview(&mut state);
+        }
+    });
+}
+
+fn render_drafts(state: &mut TableViewState) {
+    close_preview(state);
+    let Some(page) = &state.page else {
+        return;
+    };
+    let editable: Vec<_> = page
+        .metadata
+        .columns
+        .iter()
+        .map(|column| {
+            !state.read_only
+                && !page.metadata.primary_key.is_empty()
+                && !page.metadata.primary_key.contains(&column.name)
+        })
+        .collect();
+    state.grid.set_table_rows(
+        page.rows
+            .iter()
+            .map(|row| {
+                let pending = state.pending.get(&page.metadata, row);
+                let values = state.pending.values(&page.metadata, row);
+                GridRow {
+                    values: values
+                        .iter()
+                        .map(|value| (!value.is_null()).then(|| format::display_value(value)))
+                        .collect(),
+                    source: row.clone(),
+                    editable: editable.clone(),
+                    changed: pending.map_or_else(Vec::new, |pending| {
+                        pending
+                            .original
+                            .iter()
+                            .zip(&pending.changes)
+                            .map(|(old, new)| old != new)
+                            .collect()
+                    }),
+                    deleted: pending.is_some_and(|pending| pending.deleted),
+                    staged: pending.is_some(),
+                }
+            })
+            .collect(),
+    );
+    update_actions(state);
+}
+
+fn update_actions(state: &TableViewState) {
+    let idle = !state.loading && !state.saving;
+    let has_pending = !state.pending.is_empty();
+    state.pending_bar.set_reveal_child(has_pending);
+    state.pending_label.set_label(&format!(
+        "{} pending · {} edited · {} deleted — not saved yet",
+        state.pending.len(),
+        state.pending.len() - state.pending.delete_count(),
+        state.pending.delete_count()
+    ));
+    state.save_button.set_label(if state.saving {
+        "Saving…"
+    } else {
+        "Save changes"
+    });
+    state
+        .save_button
+        .set_sensitive(idle && has_pending && !state.read_only);
+    state.discard_button.set_sensitive(idle);
+    state.refresh_button.set_sensitive(idle && !has_pending);
+    state.refresh_button.set_tooltip_text(
+        has_pending.then_some("Save or discard pending changes before refreshing"),
+    );
+    state
+        .export_button
+        .set_sensitive(idle && !has_pending && state.page.is_some());
+    state.export_button.set_tooltip_text(
+        has_pending.then_some("Save or discard pending changes before exporting all rows"),
+    );
+    state.filter_panel.set_sensitive(idle);
+    state.previous_button.set_sensitive(idle);
+    state.next_button.set_sensitive(idle);
+    state
+        .copy_button
+        .set_sensitive(idle && state.page.is_some());
+    let selected = state.grid.selected_rows();
+    state.selection_label.set_label(&if selected.is_empty() {
+        String::new()
+    } else {
+        format!("{} selected", selected.len())
+    });
+    state.copy_selected_button.set_visible(!selected.is_empty());
+    state.copy_selected_button.set_sensitive(idle);
+    if let Some(page) = &state.page {
+        let editable = !state.read_only && !page.metadata.primary_key.is_empty();
+        state
+            .delete_button
+            .set_visible(editable && !selected.is_empty());
+        state.delete_button.set_sensitive(idle);
+        let all_deleted = !selected.is_empty()
+            && selected.iter().all(|index| {
+                page.rows
+                    .get(*index)
+                    .and_then(|row| state.pending.get(&page.metadata, row))
+                    .is_some_and(|draft| draft.deleted)
+            });
+        state.delete_button.set_label(if all_deleted {
+            "Undo delete"
+        } else {
+            "Delete selected"
+        });
+        let copyable = page
+            .rows
+            .iter()
+            .filter(|row| {
+                !state
+                    .pending
+                    .get(&page.metadata, row)
+                    .is_some_and(|pending| pending.deleted)
+            })
+            .count();
+        state
+            .copy_button
+            .set_label(&format!("Copy visible ({copyable})"));
+    }
+}
+
+fn toggle_delete(state: &Rc<RefCell<TableViewState>>, ui: &Rc<RefCell<Ui>>) {
+    let grid = state.borrow().grid.clone();
+    grid.commit_edit();
+    let mut state = state.borrow_mut();
+    if state.read_only || state.loading || state.saving {
+        return;
+    }
+    let Some(page) = &state.page else {
+        return;
+    };
+    let metadata = page.metadata.clone();
+    let rows: Vec<_> = state
+        .grid
+        .selected_rows()
+        .iter()
+        .filter_map(|index| page.rows.get(*index).cloned())
+        .collect();
+    if let Err(error) = state.pending.toggle_delete(&metadata, &rows) {
+        drop(state);
+        ui.borrow_mut().show_error(&error);
+        return;
+    }
+    render_drafts(&mut state);
+}
+
+fn copy_rows(state: &Rc<RefCell<TableViewState>>, selected_only: bool) {
+    let grid = state.borrow().grid.clone();
+    grid.commit_edit();
+    let state = state.borrow();
+    let Some(page) = &state.page else {
+        return;
+    };
+    let selected = state.grid.selected_rows();
+    let rows: Vec<_> = page
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(index, row)| {
+            (!selected_only || selected.contains(index))
+                && !state
+                    .pending
+                    .get(&page.metadata, row)
+                    .is_some_and(|pending| pending.deleted)
+        })
+        .map(|(_, row)| state.pending.values(&page.metadata, row))
+        .collect();
+    if let Some(display) = gtk::gdk::Display::default() {
+        let columns = page
+            .metadata
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect::<Vec<_>>();
+        display
+            .clipboard()
+            .set_text(&format::csv_document(&columns, &rows));
+    }
+}
+
+fn save_changes(state: Rc<RefCell<TableViewState>>, ui: Rc<RefCell<Ui>>, engine: Arc<AppState>) {
+    let grid = state.borrow().grid.clone();
+    grid.commit_edit();
+    let batch = {
+        let mut state = state.borrow_mut();
+        if state.read_only || state.loading || state.saving || state.pending.is_empty() {
+            return;
+        }
+        state.saving = true;
+        close_preview(&mut state);
+        update_actions(&state);
+        state.grid.set_loading(true);
+        MutationBatch {
+            profile_id: state.profile_id,
+            schema: state.schema.clone(),
+            table: state.table.clone(),
+            mutations: state.pending.mutations(),
+        }
+    };
+    let reload_engine = engine.clone();
+    bridge::spawn(
+        async move {
+            engine
+                .session(batch.profile_id)
+                .await?
+                .apply_mutations(&batch)
+                .await
+        },
+        move |result| {
+            {
+                let mut current = state.borrow_mut();
+                current.saving = false;
+                current.grid.set_loading(false);
+                update_actions(&current);
+            }
+            match result {
+                Ok(result) => {
+                    state.borrow_mut().pending.clear();
+                    state.borrow().grid.clear_selection();
+                    load(state, ui.clone(), reload_engine);
+                    if result.conflicts.is_empty() {
+                        ui.borrow_mut()
+                            .show_toast(&format!("{} change(s) saved.", result.applied));
+                    } else {
+                        ui.borrow_mut().show_error(&format!(
+                            "{} row conflict(s); the table was refreshed.",
+                            result.conflicts.len()
+                        ));
+                    }
+                }
+                Err(error) => ui.borrow_mut().show_error(&format::error_message(&error)),
+            }
+        },
+    );
+}
+
+fn show_preview(
+    state: &Rc<RefCell<TableViewState>>,
+    row: Vec<Value>,
+    column: usize,
+    anchor: gtk::Widget,
+) {
+    let mut current = state.borrow_mut();
+    close_preview(&mut current);
+    if current.loading || current.saving || current.grid.is_editing() || !anchor.is_mapped() {
+        return;
+    }
+    let Some(page) = &current.page else {
+        return;
+    };
+    let Some(pending) = current.pending.get(&page.metadata, &row) else {
+        return;
+    };
+    let Some(field) = page.metadata.columns.get(column) else {
+        return;
+    };
+    if !pending.deleted && pending.original[column] == pending.changes[column] {
+        return;
+    }
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    content.add_css_class("change-preview");
+    let heading = gtk::Label::new(Some(&format!(
+        "{} · {}",
+        field.name,
+        if pending.deleted {
+            "PENDING DELETE"
+        } else {
+            "PENDING EDIT"
+        }
+    )));
+    heading.add_css_class("eyebrow");
+    heading.set_xalign(0.0);
+    content.append(&heading);
+    if pending.deleted {
+        let message = gtk::Label::new(Some("This row will be deleted when you save."));
+        message.set_xalign(0.0);
+        content.append(&message);
+    } else {
+        for (title, value, class) in [
+            ("Before", &pending.original[column], "before-value"),
+            ("After", &pending.changes[column], "after-value"),
+        ] {
+            content.append(&control_label(title));
+            let value = gtk::Label::new(Some(&format::display_value(value)));
+            value.add_css_class(class);
+            value.set_xalign(0.0);
+            value.set_wrap(true);
+            value.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            value.set_max_width_chars(48);
+            content.append(&value);
+        }
+    }
+    let undo = gtk::Button::with_label(if pending.deleted {
+        "Undo delete"
+    } else {
+        "Discard edit"
+    });
+    undo.add_css_class("secondary-button");
+    undo.set_halign(gtk::Align::Start);
+    let weak = Rc::downgrade(state);
+    undo.connect_clicked(move |_| {
+        let Some(state) = weak.upgrade() else {
+            return;
+        };
+        let mut state = state.borrow_mut();
+        if state.saving {
+            return;
+        }
+        if let Some(page) = &state.page {
+            let metadata = page.metadata.clone();
+            state.pending.discard_row(&metadata, &row);
+            render_drafts(&mut state);
+        }
+    });
+    content.append(&undo);
+    let preview = gtk::Popover::builder()
+        .child(&content)
+        .autohide(false)
+        .has_arrow(false)
+        .position(gtk::PositionType::Bottom)
+        .build();
+    preview.add_css_class("change-popover");
+    // Keep the popover's shadow/input surface below the hovered cell; otherwise
+    // it can cause a leave event as soon as the preview opens on X11.
+    preview.set_offset(0, 24);
+    let hover = gtk::EventControllerMotion::new();
+    {
+        let weak = Rc::downgrade(state);
+        hover.connect_enter(move |_, _, _| {
+            let weak = weak.clone();
+            gtk::glib::idle_add_local_once(move || {
+                if let Some(state) = weak.upgrade() {
+                    state.borrow_mut().preview_generation += 1;
+                }
+            });
+        });
+    }
+    {
+        let weak = Rc::downgrade(state);
+        hover.connect_leave(move |_| {
+            let weak = weak.clone();
+            gtk::glib::idle_add_local_once(move || {
+                if let Some(state) = weak.upgrade() {
+                    defer_close_preview(&state);
+                }
+            });
+        });
+    }
+    preview.add_controller(hover);
+    preview.set_parent(&anchor);
+    preview.popup();
+    current.preview = Some(preview);
 }
 
 fn draft_needs_value(operator: &FilterOperator) -> bool {
@@ -517,6 +1020,18 @@ fn update_order(state: Rc<RefCell<TableViewState>>, ui: Rc<RefCell<Ui>>, engine:
 }
 
 fn load(state: Rc<RefCell<TableViewState>>, ui: Rc<RefCell<Ui>>, engine: Arc<AppState>) {
+    let grid = state.borrow().grid.clone();
+    grid.commit_edit();
+    {
+        let mut state = state.borrow_mut();
+        if state.loading || state.saving {
+            return;
+        }
+        state.loading = true;
+        close_preview(&mut state);
+        state.grid.clear_selection();
+        update_actions(&state);
+    }
     let (profile_id, schema, table, offset, limit, filters, order_by) = {
         let state = state.borrow();
         (
@@ -551,8 +1066,9 @@ fn load(state: Rc<RefCell<TableViewState>>, ui: Rc<RefCell<Ui>>, engine: Arc<App
         move |result| {
             let this = state.clone();
             let mut state = this.borrow_mut();
-            state.refresh_button.set_sensitive(true);
+            state.loading = false;
             state.grid.set_loading(false);
+            update_actions(&state);
             match result {
                 Ok(page) => apply_page(&mut state, &this, page),
                 Err(error) => {
@@ -578,6 +1094,11 @@ fn apply_page(state: &mut TableViewState, this: &Rc<RefCell<TableViewState>>, pa
             )
         })
         .collect();
+    let columns_changed = state.columns
+        != columns
+            .iter()
+            .map(|(name, data_type, _)| (name.clone(), data_type.clone()))
+            .collect::<Vec<_>>();
     state.columns = page
         .metadata
         .columns
@@ -618,20 +1139,18 @@ fn apply_page(state: &mut TableViewState, this: &Rc<RefCell<TableViewState>>, pa
             .is_some_and(|order| order.descending),
     );
 
-    state.grid.set_columns(&columns);
-    state.grid.set_rows(&page.rows);
+    if columns_changed {
+        state.grid.set_columns(&columns);
+    }
 
     let total = page.total_rows.map_or_else(
         || format!("{} rows on this page", page.rows.len()),
         |total| format!("{total} rows"),
     );
-    let shown = page.rows.len();
-    state
-        .copy_button
-        .set_label(&format!("Copy visible ({shown})"));
-    state
-        .export_button
-        .set_label(&format!("Export all ({shown})"));
+    state.export_button.set_label(&page.total_rows.map_or_else(
+        || "Export all".into(),
+        |total| format!("Export all ({total})"),
+    ));
     state.status.set_label(&format!(
         "{total} · {} columns · showing rows {}–{}",
         page.metadata.columns.len(),
@@ -647,11 +1166,26 @@ fn apply_page(state: &mut TableViewState, this: &Rc<RefCell<TableViewState>>, pa
         .set_label(&format!("Page {}", state.page_index + 1));
     state.previous_button.set_visible(state.page_index > 0);
     state.next_button.set_visible(page.has_more);
+    state.grid.view.set_tooltip_text(if state.read_only {
+        Some("Read-only connection")
+    } else if page.metadata.primary_key.is_empty() {
+        Some("This table has no primary key; rows cannot be edited or deleted")
+    } else {
+        None
+    });
     state.page = Some(page);
+    render_drafts(state);
     rebuild_filter_rows_locked(state, this);
 }
 
 fn export_csv(state: Rc<RefCell<TableViewState>>, ui: Rc<RefCell<Ui>>, engine: Arc<AppState>) {
+    let grid = state.borrow().grid.clone();
+    grid.commit_edit();
+    if !state.borrow().pending.is_empty() {
+        ui.borrow_mut()
+            .show_error("Save or discard pending changes before exporting all rows.");
+        return;
+    }
     let total = state
         .borrow()
         .page
@@ -741,6 +1275,11 @@ fn export_to_path(
     order_by: Option<OrderSpec>,
     path: std::path::PathBuf,
 ) {
+    if !state.borrow().pending.is_empty() {
+        ui.borrow_mut()
+            .show_error("Save or discard pending changes before exporting all rows.");
+        return;
+    }
     state.borrow().status.set_label("Exporting…");
     bridge::spawn(
         async move {
@@ -764,15 +1303,16 @@ fn export_to_path(
                 if offset == 0 {
                     document.push_str(&format::csv_line(
                         &page
+                            .metadata
                             .columns
                             .iter()
-                            .map(|name| Value::String(name.clone()))
+                            .map(|column| Value::String(column.name.clone()))
                             .collect::<Vec<_>>(),
                     ));
                 }
                 for row in &page.rows {
                     document.push('\n');
-                    document.push_str(&format::csv_line(row));
+                    document.push_str(&format::csv_line(&row[..page.metadata.columns.len()]));
                 }
                 rows_written += page.rows.len() as u64;
                 if !page.has_more {

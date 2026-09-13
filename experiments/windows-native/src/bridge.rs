@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use dbm_engine::error::AppError;
 use dbm_engine::models::{
-    ConnectionProfile, DatabaseRef, QueryHistoryEntry, QueryResponse, SchemaNode, TablePage,
+    ConnectionProfile, DatabaseRef, MutationResult, QueryHistoryEntry, QueryResponse, SchemaNode,
+    TablePage,
 };
 use dbm_engine::state::AppState;
 use dbm_workbench::format;
@@ -34,6 +35,10 @@ pub enum EngineEvent {
     TablePage {
         tab: u64,
         result: Result<TablePage, String>,
+    },
+    TableMutations {
+        tab: u64,
+        result: Result<MutationResult, String>,
     },
     Query {
         tab: u64,

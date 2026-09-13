@@ -317,7 +317,8 @@ impl Ui {
         {
             let ui = ui.clone();
             new_query_button.connect_clicked(move |_| {
-                if let Some(profile_id) = ui.borrow().active_profile {
+                let profile_id = ui.borrow().active_profile;
+                if let Some(profile_id) = profile_id {
                     ui.borrow_mut().open_query(profile_id);
                 }
             });
@@ -545,6 +546,10 @@ impl Ui {
             profile_id,
             schema.clone(),
             table.clone(),
+            self.profiles
+                .iter()
+                .find(|profile| profile.id == profile_id)
+                .is_none_or(|profile| profile.read_only),
         );
         self.add_tab(Tab {
             id: 0,

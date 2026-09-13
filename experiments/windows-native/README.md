@@ -60,6 +60,11 @@ the toolchain Microsoft ships, because checking does not link.
   table view instead.
 - Table tabs: 200-row pages, ordering from column headers, refresh, CSV copy to
   the clipboard, and full filtered CSV export through the system save dialog.
+  Non-PK cells support double-click edits; selected rows support staged deletion
+  and undo. Amber/red pending states, before/after previews, and Save/Discard
+  keep changes local until Save. Read-only and PK-less tables stay non-editable.
+  Visible CSV copies include drafts and omit deleted rows; refresh and full
+  export require saving or discarding pending changes first.
 - Text editing (caret, selection, word movement, clipboard) implemented against
   DirectWrite, because the editor is a custom-painted surface.
 
@@ -67,8 +72,7 @@ the toolchain Microsoft ships, because checking does not link.
 
 - Structured table filters are not implemented yet (ordering, paging, and CSV
   export are).
-- No staged inline edits, no tab rename, and no updater or installer
-  integration.
+- No tab rename and no updater or installer integration.
 - Scrollbars are wheel/keyboard driven; there are no draggable scrollbars yet.
 - Per-monitor DPI changes update the render target, but mixed-DPI multi-monitor
   behavior has not been exercised.
@@ -118,3 +122,6 @@ Ctrl+Enter, the results grid, and table pages.
 
 Nothing here has been run on Windows itself. Capture behavior, keychain
 integration, DPI, and text rendering still need a real Windows run.
+The new staged-edit workflow is cross-compiled and has unit coverage, but still
+requires hands-on Windows verification (including double-click, blur/Enter/
+Escape, Ctrl/Shift selection, and Save/Discard).

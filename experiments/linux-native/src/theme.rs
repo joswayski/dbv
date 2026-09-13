@@ -215,7 +215,18 @@ popover > contents { background-color: #172231; border: 1px solid #344963; borde
 .data-grid > header > button:hover { background-color: rgba(56, 189, 248, 0.07); color: #dbe5f2; }
 .data-grid > listview > row { background-color: transparent; transition: background-color 90ms ease-out; }
 .data-grid > listview > row:hover { background-color: rgba(56, 189, 248, 0.045); }
+.data-grid > listview > row:selected { background-color: rgba(56, 189, 248, 0.09); }
 .data-grid > listview > row > cell { min-height: 35px; padding: 0 10px; border-bottom: 1px solid rgba(37, 52, 71, 0.55); color: #c5d2df; font-size: 11px; transition: background-color 90ms ease-out, color 90ms ease-out; }
+.data-grid > listview > row > cell.staged-cell { background-color: rgba(251, 191, 36, 0.035); }
+.data-grid > listview > row > cell.changed-cell { background-color: rgba(251, 191, 36, 0.14); color: #fde68a; box-shadow: inset 0 -1px rgba(251, 191, 36, 0.38); }
+.data-grid > listview > row > cell.deleted-cell { background-color: rgba(248, 113, 113, 0.12); color: #fca5a5; box-shadow: none; }
+.data-grid > listview > row > cell.deleted-cell .null-value { color: #e09a9a; }
+entry.cell-editor { background-color: #101a27; color: #dbe5f2; border: 1px solid #38bdf8; border-radius: 3px; min-height: 25px; padding: 1px 4px; font-size: 11px; }
+.pending-changes { background-color: rgba(251, 191, 36, 0.065); border: 1px solid rgba(251, 191, 36, 0.28); color: #fcd34d; border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; font-size: 11px; }
+.change-popover > contents { background-color: #111c29; border: 1px solid #3b4859; padding: 12px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5); }
+.change-preview { min-width: 260px; font-size: 11px; }
+.before-value { color: #fca5a5; background-color: rgba(248, 113, 113, 0.07); padding: 6px 8px; border-radius: 3px; }
+.after-value { color: #86efac; background-color: rgba(74, 222, 128, 0.07); padding: 6px 8px; border-radius: 3px; }
 .grid-header { color: #aebfd2; font-size: 10px; font-weight: 700; padding: 5px 8px; }
 .grid-cell { font-size: 11px; padding: 0; }
 .null-value { color: #64748b; font-style: italic; }
@@ -344,6 +355,66 @@ mod tests {
         assert_eq!(pixel(760, 200), [14, 22, 32]);
         assert_eq!(pixel(760, 60), [23, 35, 50], "header fills available width");
         assert!(!grid.view.shows_column_separators());
+
+        // Draft decorations must tint the real cells, not a label-sized patch,
+        // and deleting an edited row must override its amber background.
+        let draft = crate::ui::grid::GridRow {
+            values: vec![Some("7".into()), Some("Edited".into())],
+            source: vec![],
+            editable: vec![false, true],
+            changed: vec![false, true],
+            staged: true,
+            deleted: false,
+        };
+        let mut deleted = draft.clone();
+        deleted.deleted = true;
+        grid.set_table_rows(vec![draft, deleted]);
+        for _ in 0..30 {
+            while context.pending() {
+                context.iteration(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        fn cells(widget: &gtk::Widget, result: &mut Vec<gtk::Widget>) {
+            if widget.has_css_class("staged-cell") {
+                result.push(widget.clone());
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                cells(&widget, result);
+                child = widget.next_sibling();
+            }
+        }
+        let snapshot = gtk::Snapshot::new();
+        window.snapshot_child(&content, &snapshot);
+        let texture = window
+            .renderer()
+            .unwrap()
+            .render_texture(snapshot.to_node().unwrap(), None);
+        let stride = texture.width() as usize * 4;
+        let mut pixels = vec![0; stride * texture.height() as usize];
+        texture.download(&mut pixels, stride);
+        let mut staged = Vec::new();
+        cells(grid.view.upcast_ref(), &mut staged);
+        assert_eq!(staged.len(), 4);
+        for cell in staged {
+            let bounds = cell.compute_bounds(&content).unwrap();
+            let offset = (bounds.y() as usize + 4) * stride + (bounds.x() as usize + 4) * 4;
+            let actual = [pixels[offset + 2], pixels[offset + 1], pixels[offset]];
+            let expected = if cell.has_css_class("deleted-cell") {
+                [42_u8, 33, 42]
+            } else if cell.has_css_class("changed-cell") {
+                [47, 46, 33]
+            } else {
+                [22, 28, 32]
+            };
+            for (actual, expected) in actual.into_iter().zip(expected) {
+                assert!(
+                    actual.abs_diff(expected) <= 1,
+                    "draft cell tint: {actual} != {expected}"
+                );
+            }
+        }
         window.close();
     }
 }

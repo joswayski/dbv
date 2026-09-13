@@ -52,23 +52,25 @@ without macOS.
 - Query tabs: statement-under-cursor targeting, ⌘↩ to run, destructive-statement
   confirmation, 10,000-row cap, per-profile history, and a results grid. A
   `SELECT * FROM table` statement opens the full table view instead.
-- Table tabs: paginated previews, ordering from column headers, CSV copy, and
-  full filtered CSV export.
+- Table tabs: paginated previews, ordering from column headers, staged inline
+  edits and deletions for primary-key tables, conflict-aware saves, CSV copy,
+  and full filtered CSV export.
 
 ## Known gaps
 
 - Structured table filters are not implemented yet (ordering, paging, and CSV
   export are).
-- No staged inline edits, no tab rename, and no updater or installer
-  integration.
+- No tab rename and no updater or installer integration.
 - The app is built ad-hoc for local testing; it is not signed or notarized.
 
 ## Verification status
 
 The Rust bridge is covered by tests that run anywhere (`cargo test` in
-`bridge/`): request validation, profile round-trip, and connection-URL import.
+`bridge/`): request and mutation-batch validation, profile round-trip,
+connection-URL import, and hidden PostgreSQL `xmin` exclusion from CSV export.
 
-The SwiftUI layer typechecks and links into an app bundle on the macOS CI
-runner (macOS 14, arm64) via `./build.sh check` and `./build.sh release`, and
-`./build.sh` does the same locally. It has not been launched on a Mac yet, so
-treat the UI as unverified until it has been run.
+The earlier SwiftUI slice typechecked and linked on the macOS CI runner
+(macOS 14, arm64). The staged-edit changes still need `./build.sh check`, a
+bundle build, and hands-on verification on macOS. In particular, test cell
+commit/cancel, tab switching, selection, Save/Discard, and preview popovers;
+the Rust bridge tests do not verify SwiftUI behavior.

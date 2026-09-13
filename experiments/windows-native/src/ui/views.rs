@@ -4,7 +4,7 @@ use dbm_engine::models::{DatabaseEngine, SchemaNode};
 use dbm_workbench::format;
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 
-use super::{column_width, Action, FieldId, Layout, TabKind, Ui, ViewId};
+use super::{column_width, table_row_key, Action, FieldId, Layout, TabKind, Ui, ViewId};
 use crate::render::{height, rect, width, Renderer, TextAlign};
 use crate::theme::{self, Font};
 
@@ -898,9 +898,51 @@ impl Ui {
         let title = format!("{}.{}", state.schema, state.table);
         let status = state.status.clone();
         let loading = state.loading;
+        let saving = state.saving;
+        let busy = loading || saving;
         let order_by = state.order_by.clone();
         let columns: Vec<(String, String)> = state.columns.clone();
         let page = state.page.clone();
+        let pending = state.pending.clone();
+        let pending_count = pending.len();
+        let delete_count = pending.delete_count();
+        let selected_rows = state.selected_rows.clone();
+        let selection_count = selected_rows.len();
+        let preview_row = state.preview_row.clone();
+        let read_only = self
+            .profile(state.profile_id)
+            .is_some_and(|profile| profile.read_only);
+        let editable = !read_only
+            && page
+                .as_ref()
+                .is_some_and(|page| !page.metadata.primary_key.is_empty());
+        let all_selected_deleted = page.as_ref().is_some_and(|page| {
+            let selected = page
+                .rows
+                .iter()
+                .enumerate()
+                .filter(|(index, row)| {
+                    selected_rows.contains(&table_row_key(
+                        &page.metadata,
+                        row,
+                        page.offset as usize + index,
+                    ))
+                })
+                .collect::<Vec<_>>();
+            !selected.is_empty()
+                && selected.iter().all(|(_, row)| {
+                    pending
+                        .get(&page.metadata, row)
+                        .is_some_and(|mutation| mutation.deleted)
+                })
+        });
+        let delete_label = if all_selected_deleted {
+            "Undo staged deletion".to_owned()
+        } else if selection_count == 1 {
+            "Stage row for deletion".to_owned()
+        } else {
+            format!("Stage {selection_count} rows for deletion")
+        };
 
         let toolbar = rect(area.left, area.top, area.right, area.top + 54.0);
         let _ = r.fill_rect(toolbar, theme::BG, 1.0);
@@ -930,20 +972,37 @@ impl Ui {
             TextAlign::Leading,
         );
         let mut x = toolbar.right - 12.0;
-        for (label, action) in [
-            ("Refresh", Action::RefreshTable(tab_id)),
-            ("Export CSV", Action::ExportTableCsv(tab_id)),
-            ("Copy CSV", Action::CopyTableCsv(tab_id)),
+        let total_rows = page.as_ref().and_then(|page| page.total_rows);
+        let export_label = total_rows.map_or_else(
+            || "Export all".to_owned(),
+            |total| format!("Export all ({total})"),
+        );
+        for (label, action, enabled) in [
+            (
+                "Refresh".to_owned(),
+                Action::RefreshTable(tab_id),
+                pending_count == 0,
+            ),
+            (
+                export_label,
+                Action::ExportTableCsv(tab_id),
+                pending_count == 0,
+            ),
+            (
+                "Copy visible".to_owned(),
+                Action::CopyTableCsv(tab_id),
+                true,
+            ),
         ] {
-            let width = r.text_width(label, Font::Ui).unwrap_or(70.0) + 24.0;
+            let width = r.text_width(&label, Font::Ui).unwrap_or(70.0) + 24.0;
             let button_rect = rect(x - width, toolbar.top + 13.0, x, toolbar.top + 41.0);
             self.button(
                 r,
                 button_rect,
-                label,
+                &label,
                 ButtonKind::Secondary,
                 action,
-                !loading,
+                !busy && enabled,
             );
             x -= width + 6.0;
         }
@@ -956,7 +1015,13 @@ impl Ui {
             toolbar.bottom + 24.0,
         );
         let _ = r.draw_text(
-            &status,
+            &if read_only {
+                format!("{status} · read-only")
+            } else if !editable && page.is_some() {
+                format!("{status} · editing requires a primary key")
+            } else {
+                status
+            },
             status_rect,
             theme::MUTED,
             Font::Small,
@@ -964,7 +1029,108 @@ impl Ui {
             false,
         );
 
-        let grid_top = status_rect.bottom + 6.0;
+        let controls = rect(
+            area.left + 14.0,
+            status_rect.bottom + 6.0,
+            area.right - 14.0,
+            status_rect.bottom + 40.0,
+        );
+        if pending_count > 0 {
+            let banner = controls;
+            let _ = r.fill_round_rect(banner, 6.0, 0x2a2112, 1.0);
+            let _ = r.stroke_round_rect(banner, 6.0, 0xf59e0b, 1.0);
+            let edit_count = pending_count - delete_count;
+            let summary =
+                format!(
+                "{pending_count} pending {}  ·  {edit_count} edited  ·  {delete_count} deletion{}",
+                if pending_count == 1 { "change" } else { "changes" },
+                if delete_count == 1 { "" } else { "s" }
+            );
+            let _ = r.draw_text(
+                &summary,
+                rect(
+                    banner.left + 10.0,
+                    banner.top,
+                    banner.right - 380.0,
+                    banner.bottom,
+                ),
+                0xfcd34d,
+                Font::Small,
+                TextAlign::Leading,
+                false,
+            );
+            if selection_count > 0 && editable {
+                self.button(
+                    r,
+                    rect(
+                        banner.right - 372.0,
+                        banner.top + 4.0,
+                        banner.right - 222.0,
+                        banner.bottom - 4.0,
+                    ),
+                    &delete_label,
+                    ButtonKind::Danger,
+                    Action::StageDelete(tab_id),
+                    !busy,
+                );
+            }
+            self.button(
+                r,
+                rect(
+                    banner.right - 216.0,
+                    banner.top + 4.0,
+                    banner.right - 106.0,
+                    banner.bottom - 4.0,
+                ),
+                "Discard changes",
+                ButtonKind::Secondary,
+                Action::DiscardTable(tab_id),
+                !busy,
+            );
+            self.button(
+                r,
+                rect(
+                    banner.right - 100.0,
+                    banner.top + 4.0,
+                    banner.right - 6.0,
+                    banner.bottom - 4.0,
+                ),
+                if saving { "Saving…" } else { "Save changes" },
+                ButtonKind::Primary,
+                Action::SaveTable(tab_id),
+                !busy,
+            );
+        } else if selection_count > 0 && editable {
+            let selection = controls;
+            let label = format!("{selection_count} selected");
+            let _ = r.draw_text(
+                &label,
+                rect(
+                    selection.left,
+                    selection.top,
+                    selection.left + 120.0,
+                    selection.bottom,
+                ),
+                theme::MUTED,
+                Font::Small,
+                TextAlign::Leading,
+                false,
+            );
+            self.button(
+                r,
+                rect(
+                    selection.left + 124.0,
+                    selection.top + 3.0,
+                    selection.left + 286.0,
+                    selection.bottom - 3.0,
+                ),
+                &delete_label,
+                ButtonKind::Danger,
+                Action::StageDelete(tab_id),
+                !busy,
+            );
+        }
+        let grid_top = controls.bottom + 6.0;
         let grid_bottom = area.bottom - 40.0;
         let grid = rect(
             area.left + 14.0,
@@ -998,47 +1164,132 @@ impl Ui {
             let v_scroll = self.scroll_offset(ViewId::Table(tab_id));
             let header_height = 47.0;
             let row_height = 36.0;
+            let grid_body = rect(grid.left, grid.top + header_height, grid.right, grid.bottom);
 
-            self.scroll_region(
-                ViewId::Table(tab_id),
-                rect(grid.left, grid.top + header_height, grid.right, grid.bottom),
-            );
+            self.scroll_region(ViewId::Table(tab_id), grid_body);
             self.scroll_region(
                 ViewId::TableX(tab_id),
                 rect(grid.left, grid.top, grid.right, grid.bottom),
             );
 
-            let _ = r.push_clip(rect(
-                grid.left,
-                grid.top + header_height,
-                grid.right,
-                grid.bottom,
-            ));
+            let _ = r.push_clip(grid_body);
             r.translate(grid.left - h_scroll, grid.top + header_height - v_scroll);
 
             if let Some(page) = &page {
                 let mut row_y = 0.0;
-                for row in &page.rows {
+                for (row_index, row) in page.rows.iter().enumerate() {
+                    let key = table_row_key(&page.metadata, row, page.offset as usize + row_index);
+                    let staged = pending.get(&page.metadata, row);
+                    let values = pending.values(&page.metadata, row);
+                    let deleted = staged.is_some_and(|mutation| mutation.deleted);
+                    let selected = selected_rows.contains(&key);
+                    if deleted {
+                        let _ = r.fill_rect(
+                            rect(0.0, row_y, total_width, row_y + row_height),
+                            theme::DANGER,
+                            0.1,
+                        );
+                    } else if selected {
+                        let _ = r.fill_rect(
+                            rect(0.0, row_y, total_width, row_y + row_height),
+                            theme::ACCENT,
+                            0.1,
+                        );
+                    }
                     let mut cell_x = 0.0;
                     // Only the metadata columns are shown: PostgreSQL table
                     // pages carry a trailing `__dbm_xmin` value for mutations.
                     for (column_index, _) in columns.iter().enumerate() {
                         let width = widths.get(column_index).copied().unwrap_or(120.0);
-                        let value = row.get(column_index).unwrap_or(&serde_json::Value::Null);
-                        let cell = rect(
-                            cell_x + 10.0,
-                            row_y,
-                            cell_x + width - 10.0,
-                            row_y + row_height,
-                        );
-                        let text = format::display_value(value);
-                        let color = if value.is_null() {
-                            theme::SUBTLE
+                        let value = values.get(column_index).unwrap_or(&serde_json::Value::Null);
+                        let cell = rect(cell_x, row_y, cell_x + width, row_y + row_height);
+                        let changed = staged.is_some_and(|mutation| {
+                            !mutation.deleted
+                                && mutation.original.get(column_index)
+                                    != mutation.changes.get(column_index)
+                        });
+                        if changed {
+                            let _ = r.fill_rect(cell, 0xf59e0b, 0.2);
+                        }
+                        let field = FieldId::TableCell(tab_id, row_index, column_index);
+                        if self.focused(field) {
+                            let editor = rect(
+                                cell.left + 3.0,
+                                cell.top + 3.0,
+                                cell.right - 3.0,
+                                cell.bottom - 3.0,
+                            );
+                            self.text_field(r, editor, field);
+                            self.remove_field_hit_region(field);
+                            let editor_screen = rect(
+                                grid.left + editor.left - h_scroll,
+                                grid.top + header_height + editor.top - v_scroll,
+                                grid.left + editor.right - h_scroll,
+                                grid.top + header_height + editor.bottom - v_scroll,
+                            );
+                            if !busy {
+                                self.field_rect(
+                                    field,
+                                    rect(
+                                        editor_screen.left + 8.0,
+                                        editor_screen.top,
+                                        editor_screen.right - 8.0,
+                                        editor_screen.bottom,
+                                    ),
+                                );
+                                if let Some(hit) = intersect_rect(editor_screen, grid_body) {
+                                    self.region(hit, Action::ClickField { field });
+                                }
+                            }
                         } else {
-                            theme::TEXT
-                        };
-                        let _ =
-                            r.draw_text_ellipsis(&text, cell, color, Font::Ui, TextAlign::Leading);
+                            let text = format::display_value(value);
+                            let color = if deleted {
+                                0xfca5a5
+                            } else if changed {
+                                0xfef3c7
+                            } else if value.is_null() {
+                                theme::SUBTLE
+                            } else {
+                                theme::TEXT
+                            };
+                            let _ = r.draw_text_ellipsis(
+                                &text,
+                                rect(cell.left + 10.0, cell.top, cell.right - 10.0, cell.bottom),
+                                color,
+                                Font::Ui,
+                                TextAlign::Leading,
+                            );
+                            if deleted {
+                                let text_width = r
+                                    .text_width(&text, Font::Ui)
+                                    .unwrap_or(0.0)
+                                    .min((cell.right - cell.left - 20.0).max(0.0));
+                                let _ = r.hline(
+                                    cell.left + 10.0,
+                                    cell.left + 10.0 + text_width,
+                                    (cell.top + cell.bottom) / 2.0,
+                                    color,
+                                );
+                            }
+                            if !busy {
+                                let hit = rect(
+                                    grid.left + cell.left - h_scroll,
+                                    grid.top + header_height + cell.top - v_scroll,
+                                    grid.left + cell.right - h_scroll,
+                                    grid.top + header_height + cell.bottom - v_scroll,
+                                );
+                                if let Some(hit) = intersect_rect(hit, grid_body) {
+                                    self.region(
+                                        hit,
+                                        Action::TableCell {
+                                            tab: tab_id,
+                                            row: row_index,
+                                            column: column_index,
+                                        },
+                                    );
+                                }
+                            }
+                        }
                         cell_x += width;
                     }
                     let _ = r.fill_rect(
@@ -1074,7 +1325,7 @@ impl Ui {
                     column: name.clone(),
                 };
                 let header = rect(cell_x, 0.0, cell_x + width, header_height);
-                if self.hovered(&action) {
+                if !busy && self.hovered(&action) {
                     let _ = r.fill_rect(
                         header,
                         theme::ACCENT,
@@ -1120,15 +1371,19 @@ impl Ui {
                     TextAlign::Leading,
                 );
                 let _ = r.vline(header.right, header.top, header.bottom, theme::BORDER);
-                self.region(
-                    rect(
-                        (grid.left + header.left - h_scroll).max(grid.left),
-                        grid.top,
-                        (grid.left + header.right - h_scroll).min(grid.right),
-                        grid.top + header_height,
-                    ),
-                    action,
-                );
+                if !busy {
+                    if let Some(hit) = intersect_rect(
+                        rect(
+                            grid.left + header.left - h_scroll,
+                            grid.top,
+                            grid.left + header.right - h_scroll,
+                            grid.top + header_height,
+                        ),
+                        rect(grid.left, grid.top, grid.right, grid.top + header_height),
+                    ) {
+                        self.region(hit, action);
+                    }
+                }
                 cell_x += width;
             }
             r.reset_transform();
@@ -1153,21 +1408,21 @@ impl Ui {
                     "← Previous",
                     ButtonKind::Secondary,
                     Action::PagePrev(tab_id),
-                    !loading,
+                    !busy,
                 );
                 px += 104.0;
             }
             let label = format!("Page {}", page_index + 1);
-            let width = r.text_width(&label, Font::Small).unwrap_or(60.0);
+            let label_width = r.text_width(&label, Font::Small).unwrap_or(60.0);
             let _ = r.draw_text(
                 &label,
-                rect(px, pager.top, px + width + 10.0, pager.bottom),
+                rect(px, pager.top, px + label_width + 10.0, pager.bottom),
                 theme::MUTED,
                 Font::Small,
                 TextAlign::Leading,
                 false,
             );
-            px += width + 12.0;
+            px += label_width + 12.0;
             if has_more {
                 let next = rect(px, pager.top + 6.0, px + 88.0, pager.top + 32.0);
                 self.button(
@@ -1176,8 +1431,140 @@ impl Ui {
                     "Next →",
                     ButtonKind::Secondary,
                     Action::PageNext(tab_id),
-                    !loading,
+                    !busy,
                 );
+            }
+
+            if let (Some(page), Some(preview_key)) = (&page, &preview_row) {
+                if let Some((row_index, row)) = page.rows.iter().enumerate().find(|(index, row)| {
+                    table_row_key(&page.metadata, row, page.offset as usize + index) == *preview_key
+                }) {
+                    if let Some(mutation) = pending.get(&page.metadata, row) {
+                        let panel_width = 480.0_f32.min(width(grid) - 24.0);
+                        let changed = page
+                            .metadata
+                            .columns
+                            .iter()
+                            .enumerate()
+                            .filter(|(index, _)| {
+                                mutation.original.get(*index) != mutation.changes.get(*index)
+                            })
+                            .take(5)
+                            .collect::<Vec<_>>();
+                        let lines = if mutation.deleted {
+                            1
+                        } else {
+                            changed.len().max(1)
+                        };
+                        let panel_height = 46.0 + lines as f32 * 24.0;
+                        let panel = rect(
+                            grid.right - panel_width - 12.0,
+                            grid.bottom - panel_height - 12.0,
+                            grid.right - 12.0,
+                            grid.bottom - 12.0,
+                        );
+                        let accent = if mutation.deleted {
+                            theme::DANGER
+                        } else {
+                            0xf59e0b
+                        };
+                        let _ = r.fill_round_rect(
+                            panel,
+                            7.0,
+                            if mutation.deleted { 0x21181d } else { 0x151b23 },
+                            1.0,
+                        );
+                        let _ = r.stroke_round_rect(panel, 7.0, accent, 1.0);
+                        let heading = if mutation.deleted {
+                            "PENDING DELETION"
+                        } else {
+                            "BEFORE / AFTER"
+                        };
+                        let _ = r.draw_text(
+                            heading,
+                            rect(
+                                panel.left + 12.0,
+                                panel.top + 7.0,
+                                panel.right - 150.0,
+                                panel.top + 27.0,
+                            ),
+                            accent,
+                            Font::Eyebrow,
+                            TextAlign::Leading,
+                            false,
+                        );
+                        self.button(
+                            r,
+                            rect(
+                                panel.right - 140.0,
+                                panel.top + 5.0,
+                                panel.right - 8.0,
+                                panel.top + 31.0,
+                            ),
+                            if mutation.deleted {
+                                "Undo deletion"
+                            } else {
+                                "Discard row changes"
+                            },
+                            ButtonKind::Secondary,
+                            Action::DiscardTableRow {
+                                tab: tab_id,
+                                row: row_index,
+                            },
+                            !busy,
+                        );
+                        if mutation.deleted {
+                            let _ = r.draw_text(
+                                "This row will be removed when changes are saved.",
+                                rect(
+                                    panel.left + 12.0,
+                                    panel.top + 34.0,
+                                    panel.right - 12.0,
+                                    panel.bottom - 6.0,
+                                ),
+                                0xfca5a5,
+                                Font::Small,
+                                TextAlign::Leading,
+                                false,
+                            );
+                        } else if changed.is_empty() {
+                            let _ = r.draw_text(
+                                "No changed values on this page.",
+                                rect(
+                                    panel.left + 12.0,
+                                    panel.top + 34.0,
+                                    panel.right - 12.0,
+                                    panel.bottom - 6.0,
+                                ),
+                                theme::MUTED,
+                                Font::Small,
+                                TextAlign::Leading,
+                                false,
+                            );
+                        } else {
+                            let mut y = panel.top + 34.0;
+                            for (index, column) in changed {
+                                let before = mutation
+                                    .original
+                                    .get(index)
+                                    .map_or_else(|| "NULL".to_owned(), format::display_value);
+                                let after = mutation
+                                    .changes
+                                    .get(index)
+                                    .map_or_else(|| "NULL".to_owned(), format::display_value);
+                                let line = format!("{}:  {}  →  {}", column.name, before, after);
+                                let _ = r.draw_text_ellipsis(
+                                    &line,
+                                    rect(panel.left + 12.0, y, panel.right - 12.0, y + 22.0),
+                                    0xfef3c7,
+                                    Font::Small,
+                                    TextAlign::Leading,
+                                );
+                                y += 24.0;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1837,9 +2224,21 @@ fn fill_grid_width(widths: &mut [f32], available: f32) {
     }
 }
 
+fn intersect_rect(left: D2D_RECT_F, right: D2D_RECT_F) -> Option<D2D_RECT_F> {
+    let intersection = rect(
+        left.left.max(right.left),
+        left.top.max(right.top),
+        left.right.min(right.right),
+        left.bottom.min(right.bottom),
+    );
+    (intersection.left < intersection.right && intersection.top < intersection.bottom)
+        .then_some(intersection)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::fill_grid_width;
+    use super::{fill_grid_width, intersect_rect};
+    use crate::render::rect;
 
     #[test]
     fn grid_fills_spare_width_without_shrinking_scrollable_columns() {
@@ -1849,5 +2248,16 @@ mod tests {
         fill_grid_width(&mut columns, 400.0);
         assert_eq!(columns, [220.0, 380.0]);
         fill_grid_width(&mut [], 600.0);
+    }
+
+    #[test]
+    fn hit_rectangles_are_clipped_on_both_axes_and_drop_empty_regions() {
+        let body = rect(100.0, 200.0, 500.0, 600.0);
+        assert_eq!(
+            intersect_rect(rect(50.0, 150.0, 200.0, 250.0), body),
+            Some(rect(100.0, 200.0, 200.0, 250.0))
+        );
+        assert_eq!(intersect_rect(rect(120.0, 100.0, 220.0, 199.0), body), None);
+        assert_eq!(intersect_rect(rect(120.0, 601.0, 220.0, 640.0), body), None);
     }
 }
