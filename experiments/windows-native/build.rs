@@ -7,8 +7,8 @@
 use std::path::Path;
 
 fn main() {
-    println!("cargo:rerun-if-changed=../../../assets/fonts/Satoshi-Variable.ttf");
-    let font = Path::new("../../../assets/fonts/Satoshi-Variable.ttf");
+    println!("cargo:rerun-if-changed=../../assets/fonts/Satoshi-Variable.ttf");
+    let font = Path::new("../../assets/fonts/Satoshi-Variable.ttf");
     let out = std::env::var("OUT_DIR").expect("OUT_DIR");
     let generated = if font.exists() {
         format!(

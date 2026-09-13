@@ -137,6 +137,11 @@ pub fn build(
     controls.append(&limit_box);
     controls.append(&sort_box);
     controls.append(&direction_box);
+    let filter_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    filter_spacer.set_hexpand(true);
+    controls.append(&filter_spacer);
+    clear_filters.set_valign(gtk::Align::End);
+    apply_filters.set_valign(gtk::Align::End);
     controls.append(&clear_filters);
     controls.append(&apply_filters);
     let filter_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -165,9 +170,7 @@ pub fn build(
     toolbar.append(&refresh_button);
 
     let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    status_row.set_margin_start(14);
-    status_row.set_margin_end(14);
-    status_row.set_margin_top(6);
+    status_row.set_margin_bottom(8);
     status_row.append(&status);
 
     let previous_button = gtk::Button::with_label("← Previous");
@@ -186,6 +189,7 @@ pub fn build(
     pagination.append(&next_button);
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.add_css_class("workbench-view");
     root.append(&toolbar);
     root.append(&filter_panel);
     root.append(&status_row);
@@ -390,12 +394,14 @@ fn rebuild_filter_rows_locked(state: &mut TableViewState, this: &Rc<RefCell<Tabl
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         let column_names: Vec<&str> = columns.iter().map(|(name, _)| name.as_str()).collect();
         let column_dropdown = gtk::DropDown::from_strings(&column_names);
+        column_dropdown.add_css_class("filter-column");
         if let Some(position) = columns.iter().position(|(name, _)| name == &draft.column) {
             column_dropdown.set_selected(position as u32);
         }
         column_dropdown.set_tooltip_text(Some("Column"));
         let operator_labels: Vec<&str> = FILTER_OPERATORS.iter().map(|(_, label)| *label).collect();
         let operator_dropdown = gtk::DropDown::from_strings(&operator_labels);
+        operator_dropdown.add_css_class("filter-operator");
         if let Some(position) = FILTER_OPERATORS
             .iter()
             .position(|(operator, _)| operator == &draft.operator)
@@ -525,6 +531,7 @@ fn load(state: Rc<RefCell<TableViewState>>, ui: Rc<RefCell<Ui>>, engine: Arc<App
     };
     state.borrow().status.set_label("Loading…");
     state.borrow().refresh_button.set_sensitive(false);
+    state.borrow().grid.set_loading(true);
     bridge::spawn(
         async move {
             let session = engine.session(profile_id).await?;
@@ -545,6 +552,7 @@ fn load(state: Rc<RefCell<TableViewState>>, ui: Rc<RefCell<Ui>>, engine: Arc<App
             let this = state.clone();
             let mut state = this.borrow_mut();
             state.refresh_button.set_sensitive(true);
+            state.grid.set_loading(false);
             match result {
                 Ok(page) => apply_page(&mut state, &this, page),
                 Err(error) => {

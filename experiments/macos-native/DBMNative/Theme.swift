@@ -92,18 +92,48 @@ struct DBMButtonStyle: ButtonStyle {
     let kind: Kind
 
     func makeBody(configuration: Configuration) -> some View {
+        DBMButtonBody(configuration: configuration, kind: kind)
+    }
+}
+
+private struct DBMButtonBody: View {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovering = false
+
+    let configuration: ButtonStyle.Configuration
+    let kind: DBMButtonStyle.Kind
+
+    var body: some View {
         configuration.label
             .font(kind == .link ? Theme.smallFont : Theme.uiFont)
             .fontWeight(kind == .primary ? .semibold : .regular)
-            .foregroundStyle(foreground)
+            .foregroundStyle(foreground.opacity(isEnabled ? 1 : 0.42))
             .padding(.horizontal, kind == .link ? 4 : 11)
             .padding(.vertical, kind == .link ? 2 : 5)
-            .background(background.opacity(configuration.isPressed ? 0.8 : 1))
+            .background(currentBackground)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(border, lineWidth: kind == .secondary || kind == .danger ? 1 : 0)
+                    .strokeBorder(border.opacity(isEnabled ? 1 : 0.4), lineWidth: kind == .secondary || kind == .danger ? 1 : 0)
             )
             .clipShape(RoundedRectangle(cornerRadius: 6))
+            .opacity(isEnabled ? 1 : 0.7)
+            .onHover { isHovering = $0 }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.1), value: isHovering)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.09), value: configuration.isPressed)
+    }
+
+    private var currentBackground: Color {
+        guard isEnabled else { return background.opacity(0.55) }
+        if configuration.isPressed { return background.opacity(0.76) }
+        if isHovering {
+            switch kind {
+            case .primary: return Theme.accent
+            case .secondary, .danger: return Theme.panelHover
+            case .link: return Theme.accent.opacity(0.08)
+            }
+        }
+        return background
     }
 
     private var foreground: Color {

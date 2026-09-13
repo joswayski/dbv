@@ -119,6 +119,7 @@ struct ConnectionGroup: View {
                     Circle()
                         .fill(Color(hex: profile.displayColor))
                         .frame(width: 10, height: 10)
+                        .shadow(color: Color(hex: profile.displayColor).opacity(0.9), radius: 5)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(profile.name)
                             .font(.system(size: 12.5, weight: .semibold))

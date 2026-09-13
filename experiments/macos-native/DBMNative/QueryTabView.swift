@@ -14,14 +14,17 @@ struct QueryTabView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            HStack(spacing: 0) {
+            HStack(spacing: 12) {
                 editor
-                Rectangle().fill(Theme.border).frame(width: 1)
                 history
             }
-            Rectangle().fill(Theme.border).frame(height: 1)
+            .frame(minHeight: 280, idealHeight: 360)
             results
+                .padding(.top, 16)
         }
+        .padding(.horizontal, 22)
+        .padding(.top, 18)
+        .padding(.bottom, 24)
     }
 
     private var toolbar: some View {
@@ -49,7 +52,7 @@ struct QueryTabView: View {
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(model.runningQueries.contains(tab.id))
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 0)
         .padding(.vertical, 9)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
     }
@@ -73,6 +76,9 @@ struct QueryTabView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
         }
+        .background(Color(hex: "#0e1620"))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
     private var history: some View {
@@ -115,7 +121,9 @@ struct QueryTabView: View {
             }
         }
         .frame(width: 230)
-        .background(Theme.sidebar)
+        .background(Color(hex: "#0e1620"))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
     private var results: some View {

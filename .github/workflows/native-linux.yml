@@ -34,12 +34,14 @@ jobs:
             build-essential \
             libgtk-4-dev \
             libssl-dev \
-            pkg-config
+            pkg-config \
+            xvfb
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.94.0
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
       - run: cargo test
+      - run: xvfb-run -a env GSK_RENDERER=cairo cargo test -- --ignored
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo build --release

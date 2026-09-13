@@ -97,6 +97,21 @@ x86_64-w64-mingw32-gcc -shared -O2 -o bcryptprimitives.dll \
 wine dbm-native.exe
 ```
 
+The visual-parity pass also ran on Wine 8.0. In a disposable Wine prefix,
+missing Consolas caused an invisible editor even though query execution worked.
+Mapping the missing system families to installed Linux fonts restored editor
+text (restart the Wine app afterward):
+
+```sh
+wine reg add 'HKCU\Software\Wine\Fonts\Replacements' /v 'Consolas' /t REG_MULTI_SZ /d 'DejaVu Sans Mono' /f
+wine reg add 'HKCU\Software\Wine\Fonts\Replacements' /v 'Segoe UI' /t REG_MULTI_SZ /d 'DejaVu Sans' /f
+```
+
+This is a Wine-only test setup, not an application requirement or evidence of
+Windows font parity. Wine still renders UI text heavier than the Tauri
+reference. The pass checked typed full-width table/query grids, purple active
+tabs, SQL execution, and descending header sorting against local PostgreSQL.
+
 A Wine run with live PostgreSQL 15 and Redis 7 exercised connecting, the schema
 tree, typing in the DirectWrite editor, running SQL and Redis commands with
 Ctrl+Enter, the results grid, and table pages.

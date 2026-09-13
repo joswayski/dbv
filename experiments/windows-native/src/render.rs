@@ -175,10 +175,25 @@ impl Renderer {
         } else {
             DWRITE_FONT_WEIGHT_NORMAL
         };
+        // The private collection contains only Satoshi. Monospace text must
+        // use the system collection, and a missing loader needs an explicit
+        // system family rather than an arbitrary missing-family substitution.
+        let collection = if font == Font::Mono {
+            None
+        } else {
+            self.fonts.as_ref()
+        };
+        let family = if font == Font::Mono {
+            "Consolas"
+        } else if collection.is_some() {
+            theme::SATOSHI_FAMILY
+        } else {
+            "Segoe UI"
+        };
         let mut format = unsafe {
             self.dwrite.CreateTextFormat(
-                &HSTRING::from(font.family()),
-                self.fonts.as_ref(),
+                &HSTRING::from(family),
+                collection,
                 weight,
                 DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
@@ -186,12 +201,12 @@ impl Renderer {
                 &HSTRING::from("en-us"),
             )
         };
-        if format.is_err() && self.fonts.is_some() {
+        if format.is_err() && collection.is_some() {
             // Wine's DirectWrite has no in-memory font loader; fall back to the
             // system collection rather than failing to draw text.
             format = unsafe {
                 self.dwrite.CreateTextFormat(
-                    &HSTRING::from(font.family()),
+                    &HSTRING::from("Segoe UI"),
                     None,
                     weight,
                     DWRITE_FONT_STYLE_NORMAL,

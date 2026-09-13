@@ -110,16 +110,33 @@ Platform notes:
 
 ## Typography and design
 
-The React UI and all three native frontends use Satoshi for interface text and
-the platform monospace face for editors and grids, matching the Tauri app's
-tokens (10px/700 headers with an 8px muted type line, `#172332` header fill,
-`rgba(56, 189, 248, 0.045)` row hover, 90ms colour transitions, a 7px grid
-radius, and the inline filter panel). Satoshi is fetched with `npm run fonts`
-into the git-ignored `assets/fonts` because its license permits embedding but
-not repository distribution; each frontend embeds it at build time and falls
-back to the system font when it is absent. On Windows the font is registered
-through a private DirectWrite collection, and on macOS the app bundle registers
-it with `ATSApplicationFontsPath`.
+The React UI is the design reference, not a claim of completed native parity.
+The native frontends now use profile-tinted active tabs (16% over the sidebar,
+3px underline and a subtle top highlight), typed 47px table headers, 36px rows,
+full-width columns when space permits, and dark inset grid surfaces. Linux also
+has the inline filter panel, row hover, 120ms tab crossfade and a 180ms loading
+overlay that retains existing rows during a refresh. GTK honors its system
+animation setting; SwiftUI button/tab transitions honor Reduce Motion.
+Windows hover/press feedback is event-driven, not animated.
+
+Satoshi is fetched with `npm run fonts` into the git-ignored `assets/fonts`;
+the native Rust build scripts resolve that directory from their crate roots.
+Editors retain platform monospace fonts. On Windows Satoshi uses a private
+DirectWrite collection, with an explicit Segoe UI fallback if the loader is
+unavailable (including Wine); monospace text uses the system collection. The
+macOS bundle registers Satoshi with `ATSApplicationFontsPath`.
+
+The GTK visual regression test renders real widgets under Xvfb and samples
+pixels to catch Adwaita backgrounds, unstyled GtkBox tabs, lost profile color,
+and headers that fail to fill the grid. Run it with:
+
+```sh
+xvfb-run -a env GSK_RENDERER=cairo cargo test --manifest-path experiments/linux-native/Cargo.toml -- --ignored
+```
+
+This visual pass was exercised against disposable PostgreSQL data in GTK and
+Wine. macOS changes still require compilation and visual review on a Mac;
+Linux screenshots do not establish macOS or real-Windows parity.
 
 ## Known gaps versus the Tauri app
 
@@ -129,11 +146,13 @@ it with `ATSApplicationFontsPath`.
   `SELECT * FROM table` statement opens the full table view on every native
   frontend, matching the Tauri workbench, but that view is still read-only.
 - Structured table filters exist on Linux only; Windows and macOS do ordering,
-  paging, and CSV export. The Linux table now matches the React chrome (typed
-  headers, inline filter panel, hover and selection states, copy/export counts);
-  Windows and macOS still use their earlier, plainer table rendering.
-- Query tabs cannot be renamed or collapsed; table columns cannot be collapsed
-  or resized.
+  paging, and CSV export. Typed headers and dark grid treatments are implemented
+  on all three, but selection/edit effects are not.
+- Query tabs cannot be renamed or collapsed. Table columns cannot be collapsed;
+  GTK supports resizing, while Windows and macOS do not yet.
+- Full visual/animation parity remains open: editor syntax highlighting,
+  loading skeletons/blur, matching context menus, and uniform hover/focus
+  treatment. Windows has no timed transitions and macOS has not been rendered.
 - Query history in one tab does not push a live update into other open tabs.
 - There is no updater or installer integration for native builds, and none of
   them is signed or notarized.

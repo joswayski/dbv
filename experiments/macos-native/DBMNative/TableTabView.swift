@@ -23,6 +23,9 @@ struct TableTabView: View {
             grid
             pagination
         }
+        .padding(.horizontal, 22)
+        .padding(.top, 18)
+        .padding(.bottom, 24)
     }
 
     private var toolbar: some View {
@@ -47,7 +50,7 @@ struct TableTabView: View {
             Button("Refresh") { Task { await model.loadPage(tab.id) } }
                 .buttonStyle(DBMButtonStyle(kind: .secondary))
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 0)
         .padding(.vertical, 9)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
     }
@@ -59,7 +62,7 @@ struct TableTabView: View {
                 .foregroundStyle(Theme.muted)
             Spacer()
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 0)
         .padding(.vertical, 6)
     }
 

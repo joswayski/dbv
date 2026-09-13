@@ -60,6 +60,8 @@ pub fn build(
         .vexpand(true)
         .hexpand(true)
         .build();
+    editor_scroll.add_css_class("editor-frame");
+    editor_scroll.set_overflow(gtk::Overflow::Hidden);
 
     let history_list = gtk::ListBox::new();
     history_list.add_css_class("history-list");
@@ -80,7 +82,7 @@ pub fn build(
     history_panel.append(&history_title);
     history_panel.append(&history_scroll);
 
-    let split = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    let split = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     split.append(&editor_scroll);
     split.append(&history_panel);
     split.set_vexpand(true);
@@ -151,10 +153,10 @@ pub fn build(
     }));
     hint.add_css_class("muted");
     hint.set_xalign(0.0);
-    hint.set_margin_start(14);
     hint.set_margin_top(4);
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.add_css_class("workbench-view");
     root.append(&toolbar);
     root.append(&split);
     root.append(&hint);
@@ -321,6 +323,7 @@ fn execute(
         state.run_button.set_sensitive(false);
         state.refresh_button.set_sensitive(false);
         state.meta.set_label("Running…");
+        state.grid.set_loading(true);
         state.inline_error.set_reveal_child(false);
     }
     let started = Instant::now();
@@ -353,6 +356,7 @@ fn execute(
                 let mut state = state.borrow_mut();
                 state.running = false;
                 state.run_button.set_sensitive(true);
+                state.grid.set_loading(false);
                 match result {
                     Ok(response) => {
                         succeeded = true;

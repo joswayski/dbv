@@ -167,6 +167,28 @@ impl Ui {
             row.left + 22.0,
             row.top + 27.0,
         );
+        let _ = r.fill_round_rect(
+            rect(
+                dot.left - 4.0,
+                dot.top - 4.0,
+                dot.right + 4.0,
+                dot.bottom + 4.0,
+            ),
+            9.0,
+            color,
+            0.08,
+        );
+        let _ = r.fill_round_rect(
+            rect(
+                dot.left - 2.0,
+                dot.top - 2.0,
+                dot.right + 2.0,
+                dot.bottom + 2.0,
+            ),
+            7.0,
+            color,
+            0.16,
+        );
         let _ = r.fill_round_rect(dot, 5.0, color, 1.0);
 
         let name_area = rect(
@@ -640,12 +662,22 @@ impl Ui {
             let tab_rect = rect(x, area.top, x + width, area.bottom);
             let active = self.active_tab == Some(tab_id);
             if active {
-                let _ = r.fill_rect(tab_rect, theme::PANEL_RAISED, 1.0);
                 let accent = theme::parse_hex(&color);
+                let _ = r.fill_rect(tab_rect, accent, 0.16);
                 let _ = r.fill_rect(
                     rect(
                         tab_rect.left,
-                        tab_rect.bottom - 2.0,
+                        tab_rect.top,
+                        tab_rect.right,
+                        tab_rect.top + 1.0,
+                    ),
+                    accent,
+                    0.34,
+                );
+                let _ = r.fill_rect(
+                    rect(
+                        tab_rect.left,
+                        tab_rect.bottom - 3.0,
                         tab_rect.right,
                         tab_rect.bottom,
                     ),
@@ -934,7 +966,14 @@ impl Ui {
 
         let grid_top = status_rect.bottom + 6.0;
         let grid_bottom = area.bottom - 40.0;
-        let grid = rect(area.left, grid_top, area.right, grid_bottom);
+        let grid = rect(
+            area.left + 14.0,
+            grid_top,
+            area.right - 14.0,
+            grid_bottom - 6.0,
+        );
+        let _ = r.fill_round_rect(grid, 7.0, 0x0e1620, 1.0);
+        let _ = r.stroke_round_rect(grid, 7.0, theme::BORDER, 1.0);
         if columns.is_empty() {
             let _ = r.draw_text(
                 if loading {
@@ -949,15 +988,16 @@ impl Ui {
                 false,
             );
         } else {
-            let widths: Vec<f32> = columns
+            let mut widths: Vec<f32> = columns
                 .iter()
-                .map(|(_, data_type)| column_width(data_type).max(90.0))
+                .map(|(_, data_type)| column_width(data_type).max(120.0))
                 .collect();
+            fill_grid_width(&mut widths, width(grid));
             let total_width: f32 = widths.iter().sum();
             let h_scroll = self.scroll_offset(ViewId::TableX(tab_id));
             let v_scroll = self.scroll_offset(ViewId::Table(tab_id));
-            let header_height = 28.0;
-            let row_height = 26.0;
+            let header_height = 47.0;
+            let row_height = 36.0;
 
             self.scroll_region(
                 ViewId::Table(tab_id),
@@ -986,9 +1026,9 @@ impl Ui {
                         let width = widths.get(column_index).copied().unwrap_or(120.0);
                         let value = row.get(column_index).unwrap_or(&serde_json::Value::Null);
                         let cell = rect(
-                            cell_x + 6.0,
+                            cell_x + 10.0,
                             row_y,
-                            cell_x + width - 6.0,
+                            cell_x + width - 10.0,
                             row_y + row_height,
                         );
                         let text = format::display_value(value);
@@ -1001,7 +1041,16 @@ impl Ui {
                             r.draw_text_ellipsis(&text, cell, color, Font::Ui, TextAlign::Leading);
                         cell_x += width;
                     }
-                    let _ = r.hline(0.0, total_width, row_y + row_height, theme::BORDER);
+                    let _ = r.fill_rect(
+                        rect(
+                            0.0,
+                            row_y + row_height - 1.0,
+                            total_width,
+                            row_y + row_height,
+                        ),
+                        theme::BORDER,
+                        0.55,
+                    );
                     row_y += row_height;
                 }
             }
@@ -1016,11 +1065,7 @@ impl Ui {
                 grid.top + header_height,
             ));
             r.translate(grid.left - h_scroll, grid.top);
-            let _ = r.fill_rect(
-                rect(0.0, 0.0, total_width, header_height),
-                theme::PANEL,
-                1.0,
-            );
+            let _ = r.fill_rect(rect(0.0, 0.0, total_width, header_height), 0x172332, 1.0);
             let mut cell_x = 0.0;
             for (column_index, (name, _)) in columns.iter().enumerate() {
                 let width = widths.get(column_index).copied().unwrap_or(120.0);
@@ -1030,7 +1075,11 @@ impl Ui {
                 };
                 let header = rect(cell_x, 0.0, cell_x + width, header_height);
                 if self.hovered(&action) {
-                    let _ = r.fill_rect(header, theme::PANEL_HOVER, 1.0);
+                    let _ = r.fill_rect(
+                        header,
+                        theme::ACCENT,
+                        if self.pressed(&action) { 0.11 } else { 0.07 },
+                    );
                 }
                 let marker = match &order_by {
                     Some(order) if order.column == *name => {
@@ -1045,17 +1094,41 @@ impl Ui {
                 let _ = r.draw_text_ellipsis(
                     &format!("{name}{marker}"),
                     rect(
-                        header.left + 6.0,
-                        header.top,
-                        header.right - 6.0,
-                        header.bottom,
+                        header.left + 10.0,
+                        header.top + 5.0,
+                        header.right - 10.0,
+                        header.top + 27.0,
                     ),
-                    theme::MUTED,
+                    if marker.is_empty() {
+                        0xaebfd2
+                    } else {
+                        theme::TEXT
+                    },
                     Font::UiBold,
                     TextAlign::Leading,
                 );
+                let _ = r.draw_text_ellipsis(
+                    &columns[column_index].1,
+                    rect(
+                        header.left + 10.0,
+                        header.top + 25.0,
+                        header.right - 10.0,
+                        header.bottom - 3.0,
+                    ),
+                    0x62778f,
+                    Font::Eyebrow,
+                    TextAlign::Leading,
+                );
                 let _ = r.vline(header.right, header.top, header.bottom, theme::BORDER);
-                self.region(header, action);
+                self.region(
+                    rect(
+                        (grid.left + header.left - h_scroll).max(grid.left),
+                        grid.top,
+                        (grid.left + header.right - h_scroll).min(grid.right),
+                        grid.top + header_height,
+                    ),
+                    action,
+                );
                 cell_x += width;
             }
             r.reset_transform();
@@ -1480,40 +1553,79 @@ impl Ui {
         if let Some(response) = &response {
             if !response.columns.is_empty() {
                 let grid = rect(
-                    results_view.left,
-                    results_view.top + 24.0,
-                    results_view.right,
-                    results_view.bottom,
+                    results_view.left + 14.0,
+                    results_view.top + 28.0,
+                    results_view.right - 14.0,
+                    results_view.bottom - 14.0,
                 );
-                let widths: Vec<f32> = response
+                let _ = r.fill_round_rect(grid, 7.0, 0x0e1620, 1.0);
+                let _ = r.stroke_round_rect(grid, 7.0, theme::BORDER, 1.0);
+                let mut widths: Vec<f32> = response
                     .columns
                     .iter()
-                    .map(|column| column_width(&column.data_type).max(90.0))
+                    .map(|column| column_width(&column.data_type).max(120.0))
                     .collect();
+                fill_grid_width(&mut widths, width(grid));
                 let total_width: f32 = widths.iter().sum();
                 let h_scroll = self.scroll_offset(ViewId::ResultsX(tab_id));
                 let v_scroll = self.scroll_offset(ViewId::Results(tab_id));
-                self.scroll_region(ViewId::Results(tab_id), grid);
+                let header_height = 47.0;
+                let row_height = 36.0;
+                self.scroll_region(
+                    ViewId::Results(tab_id),
+                    rect(grid.left, grid.top + header_height, grid.right, grid.bottom),
+                );
                 self.scroll_region(ViewId::ResultsX(tab_id), grid);
-                let _ = r.push_clip(grid);
-                r.translate(grid.left - h_scroll, grid.top - v_scroll);
-                let row_height = 24.0;
-                let _ = r.fill_rect(rect(0.0, 0.0, total_width, 24.0), theme::PANEL, 1.0);
+                let _ = r.push_clip(rect(
+                    grid.left,
+                    grid.top,
+                    grid.right,
+                    grid.top + header_height,
+                ));
+                r.translate(grid.left - h_scroll, grid.top);
+                let _ = r.fill_rect(rect(0.0, 0.0, total_width, header_height), 0x172332, 1.0);
                 let mut cell_x = 0.0;
                 for (index, column) in response.columns.iter().enumerate() {
                     let width = widths.get(index).copied().unwrap_or(120.0);
                     let _ = r.draw_text_ellipsis(
                         &column.name,
-                        rect(cell_x + 6.0, 0.0, cell_x + width - 6.0, 24.0),
-                        theme::MUTED,
+                        rect(cell_x + 10.0, 5.0, cell_x + width - 10.0, 27.0),
+                        0xaebfd2,
                         Font::UiBold,
                         TextAlign::Leading,
                     );
-                    let _ = r.vline(cell_x + width, 0.0, height(grid), theme::BORDER);
+                    let _ = r.draw_text_ellipsis(
+                        &column.data_type,
+                        rect(
+                            cell_x + 10.0,
+                            25.0,
+                            cell_x + width - 10.0,
+                            header_height - 3.0,
+                        ),
+                        0x62778f,
+                        Font::Eyebrow,
+                        TextAlign::Leading,
+                    );
+                    let _ = r.vline(cell_x + width, 0.0, header_height, theme::BORDER);
                     cell_x += width;
                 }
-                let _ = r.hline(0.0, total_width, 24.0, theme::BORDER);
-                let mut row_y = 24.0;
+                r.reset_transform();
+                r.pop_clip();
+                let _ = r.hline(
+                    grid.left,
+                    grid.right,
+                    grid.top + header_height,
+                    theme::BORDER_STRONG,
+                );
+
+                let _ = r.push_clip(rect(
+                    grid.left,
+                    grid.top + header_height,
+                    grid.right,
+                    grid.bottom,
+                ));
+                r.translate(grid.left - h_scroll, grid.top + header_height - v_scroll);
+                let mut row_y = 0.0;
                 for row in &response.rows {
                     let mut cell_x = 0.0;
                     for (index, _) in response.columns.iter().enumerate() {
@@ -1523,9 +1635,9 @@ impl Ui {
                         let _ = r.draw_text_ellipsis(
                             &text,
                             rect(
-                                cell_x + 6.0,
+                                cell_x + 10.0,
                                 row_y,
-                                cell_x + width - 6.0,
+                                cell_x + width - 10.0,
                                 row_y + row_height,
                             ),
                             if value.is_null() {
@@ -1538,7 +1650,16 @@ impl Ui {
                         );
                         cell_x += width;
                     }
-                    let _ = r.hline(0.0, total_width, row_y + row_height, theme::BORDER);
+                    let _ = r.fill_rect(
+                        rect(
+                            0.0,
+                            row_y + row_height - 1.0,
+                            total_width,
+                            row_y + row_height,
+                        ),
+                        theme::BORDER,
+                        0.55,
+                    );
                     row_y += row_height;
                 }
                 r.reset_transform();
@@ -1701,5 +1822,32 @@ impl Ui {
         }
         self.field_rect(field_id, inner);
         self.region(bounds, Action::ClickField { field: field_id });
+    }
+}
+
+/// HTML tables naturally expand to their container width. Preserve each
+/// column's minimum while giving the native grids the same edge-to-edge fill.
+fn fill_grid_width(widths: &mut [f32], available: f32) {
+    let total: f32 = widths.iter().sum();
+    if !widths.is_empty() && total < available {
+        let extra = (available - total) / widths.len() as f32;
+        for width in widths {
+            *width += extra;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fill_grid_width;
+
+    #[test]
+    fn grid_fills_spare_width_without_shrinking_scrollable_columns() {
+        let mut columns = [160.0, 320.0];
+        fill_grid_width(&mut columns, 600.0);
+        assert_eq!(columns, [220.0, 380.0]);
+        fill_grid_width(&mut columns, 400.0);
+        assert_eq!(columns, [220.0, 380.0]);
+        fill_grid_width(&mut [], 600.0);
     }
 }

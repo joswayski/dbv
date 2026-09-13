@@ -171,8 +171,11 @@ stays the fallback until they reach parity and gain installers.
 
 What is still missing before the native frontends can replace the Tauri app:
 staged inline edits and deletes, structured filters on Windows and macOS, tab
-rename/collapse, and installer, signing, and updater integration. Status, gaps,
-benchmarks, and verification rules live in
+rename/collapse, complete visual/animation parity, and installer, signing, and
+updater integration. The current visual pass brings profile-tinted tabs,
+typed full-width grids, and dark panel treatments closer to Tauri; Linux has
+rendered regression coverage, while macOS still needs on-device visual review.
+Status, gaps, benchmarks, and verification rules live in
 [docs/native-platforms.md](docs/native-platforms.md).
 
 ## Deliberate follow-ups

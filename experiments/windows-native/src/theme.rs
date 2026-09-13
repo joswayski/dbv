@@ -20,8 +20,8 @@ pub const SUCCESS: u32 = 0x4ade80;
 pub const INK_ON_ACCENT: u32 = 0x03121d;
 pub const DEFAULT_CONNECTION_COLOR: u32 = 0x38bdf8;
 
-pub const SIDEBAR_WIDTH: f32 = 320.0;
-pub const TOPBAR_HEIGHT: f32 = 48.0;
+pub const SIDEBAR_WIDTH: f32 = 280.0;
+pub const TOPBAR_HEIGHT: f32 = 68.0;
 pub const TAB_STRIP_HEIGHT: f32 = 38.0;
 pub const FONT_SIZE: f32 = 13.0;
 pub const FONT_SIZE_SMALL: f32 = 11.0;

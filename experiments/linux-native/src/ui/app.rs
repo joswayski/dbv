@@ -18,7 +18,7 @@ use crate::theme;
 use crate::ui::{dialogs, profile_dialog, query_view, table_view};
 use dbm_workbench::format;
 
-const SIDEBAR_WIDTH: i32 = 320;
+const SIDEBAR_WIDTH: i32 = 280;
 const COLLAPSED_SIDEBAR_WIDTH: i32 = 52;
 
 pub struct Ui {
@@ -141,6 +141,7 @@ impl Ui {
         // Top bar
         let identity_dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         identity_dot.add_css_class("dot");
+        identity_dot.set_valign(gtk::Align::Center);
         let identity_name = gtk::Label::new(None);
         identity_name.add_css_class("identity-name");
         identity_name.set_xalign(0.0);
@@ -151,6 +152,7 @@ impl Ui {
         identity_copy.append(&identity_name);
         identity_copy.append(&identity_meta);
         let identity_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        identity_box.set_valign(gtk::Align::Center);
         identity_box.append(&identity_dot);
         identity_box.append(&identity_copy);
 
@@ -206,6 +208,7 @@ impl Ui {
         // Content
         let stack = gtk::Stack::builder()
             .transition_type(gtk::StackTransitionType::Crossfade)
+            .transition_duration(120)
             .vexpand(true)
             .hexpand(true)
             .build();
@@ -695,6 +698,10 @@ impl Ui {
         let group = gtk::Box::new(gtk::Orientation::Vertical, 0);
         group.add_css_class("connection-group");
         let color_class = theme::color_class(format::profile_color(profile));
+        if active {
+            group.add_css_class("active");
+            group.add_css_class(&format!("{color_class}-accent"));
+        }
 
         let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         dot.add_css_class("dot");
@@ -733,7 +740,6 @@ impl Ui {
         select.set_hexpand(true);
         if active {
             select.add_css_class("active");
-            select.add_css_class(&format!("{color_class}-accent"));
         }
         let select_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         select_content.append(&dot);

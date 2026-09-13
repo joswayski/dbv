@@ -16,9 +16,10 @@ pub struct GridRow {
 
 #[derive(Clone)]
 pub struct DataGrid {
-    pub root: gtk::ScrolledWindow,
+    pub root: gtk::Overlay,
     pub view: gtk::ColumnView,
     store: gio::ListStore,
+    loading: gtk::Revealer,
 }
 
 impl Default for DataGrid {
@@ -33,10 +34,10 @@ impl DataGrid {
         let selection = gtk::NoSelection::new(Some(store.clone()));
         let view = gtk::ColumnView::new(Some(selection));
         view.add_css_class("data-grid");
-        view.set_show_column_separators(true);
-        view.set_show_row_separators(true);
+        view.set_show_column_separators(false);
+        view.set_show_row_separators(false);
 
-        let root = gtk::ScrolledWindow::builder()
+        let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Automatic)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .vexpand(true)
@@ -44,7 +45,39 @@ impl DataGrid {
             .child(&view)
             .build();
 
-        Self { root, view, store }
+        let pill = gtk::Label::new(Some("Loading…"));
+        pill.add_css_class("grid-loading-pill");
+        pill.set_halign(gtk::Align::Center);
+        pill.set_valign(gtk::Align::Center);
+        let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        shade.add_css_class("grid-loading");
+        pill.set_vexpand(true);
+        shade.append(&pill);
+        let loading = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::Crossfade)
+            .transition_duration(180)
+            .child(&shade)
+            .can_target(false)
+            .build();
+        let root = gtk::Overlay::builder()
+            .child(&scroll)
+            .hexpand(true)
+            .vexpand(true)
+            .overflow(gtk::Overflow::Hidden)
+            .build();
+        root.add_css_class("grid-frame");
+        root.add_overlay(&loading);
+
+        Self {
+            root,
+            view,
+            store,
+            loading,
+        }
+    }
+
+    pub fn set_loading(&self, loading: bool) {
+        self.loading.set_reveal_child(loading);
     }
 
     /// Rebuilds the columns. Titles carry the data type on a second line, and
@@ -91,7 +124,7 @@ impl DataGrid {
             let column = gtk::ColumnViewColumn::new(Some(&title), Some(factory));
             column.set_fixed_width(*width);
             column.set_resizable(true);
-            column.set_expand(false);
+            column.set_expand(true);
             self.view.append_column(&column);
         }
     }

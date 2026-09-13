@@ -30,11 +30,12 @@ extension Notification.Name {
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         NavigationSplitView {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 280, max: 420)
         } detail: {
             WorkbenchView()
         }
@@ -55,8 +56,8 @@ struct ContentView: View {
                 ConfirmOverlay(request: confirm)
             }
         }
-        .animation(.easeOut(duration: 0.15), value: model.errorMessage)
-        .animation(.easeOut(duration: 0.15), value: model.toast)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: model.errorMessage)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: model.toast)
     }
 }
 
